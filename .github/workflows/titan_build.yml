@@ -1,114 +1,231 @@
-name: System Pro Build APK
+name: Create Android Project Structure
 
 on:
-  repository_dispatch:
-    types: [android_full_build]
   workflow_dispatch:
     inputs:
-      package_name:
-        description: 'Package name (e.g., com.example.app)'
+      default_package:
+        description: 'Default package name (e.g., com.template.app)'
         required: false
-        default: 'com.systempro.default'
+        default: 'com.template.app'
         type: string
-      app_name:
-        description: 'App display name'
+      default_app_name:
+        description: 'Default app name'
         required: false
-        default: 'SystemProApp'
+        default: 'TemplateApp'
         type: string
 
 jobs:
-  build:
+  create-structure:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Determine package and app names
+      - name: Create Android project directories
         run: |
-          if [ -n "${{ github.event.client_payload.package_name }}" ]; then
-            PKG=$(echo "${{ github.event.client_payload.package_name }}" | base64 --decode)
-            echo "CUSTOM_PACKAGE=$PKG" >> $GITHUB_ENV
-          elif [ -n "${{ github.event.inputs.package_name }}" ]; then
-            echo "CUSTOM_PACKAGE=${{ github.event.inputs.package_name }}" >> $GITHUB_ENV
-          else
-            echo "CUSTOM_PACKAGE=com.systempro.default" >> $GITHUB_ENV
-          fi
+          PKG="${{ github.event.inputs.default_package }}"
+          APP_NAME="${{ github.event.inputs.default_app_name }}"
+          PKG_PATH=$(echo "$PKG" | tr '.' '/')
 
-          if [ -n "${{ github.event.client_payload.app_name }}" ]; then
-            APP=$(echo "${{ github.event.client_payload.app_name }}" | base64 --decode)
-            echo "CUSTOM_APPNAME=$APP" >> $GITHUB_ENV
-          elif [ -n "${{ github.event.inputs.app_name }}" ]; then
-            echo "CUSTOM_APPNAME=${{ github.event.inputs.app_name }}" >> $GITHUB_ENV
-          else
-            echo "CUSTOM_APPNAME=SystemProApp" >> $GITHUB_ENV
-          fi
+          echo "Using package: $PKG"
+          echo "Package path: $PKG_PATH"
+          echo "App name: $APP_NAME"
 
-      - name: Update Android files with custom package and app name (safe mode)
+          mkdir -p app/src/main/java/$PKG_PATH
+          mkdir -p app/src/main/res/layout
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/mipmap-mdpi
+          mkdir -p app/src/main/res/mipmap-hdpi
+          mkdir -p app/src/main/res/mipmap-xhdpi
+          mkdir -p app/src/main/res/mipmap-xxhdpi
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
+
+          echo "✅ Directories created"
+
+      - name: Create AndroidManifest.xml
         run: |
-          # Update AndroidManifest.xml if it exists
-          if [ -f app/src/main/AndroidManifest.xml ]; then
-            sed -i "s/package=\".*\"/package=\"$CUSTOM_PACKAGE\"/" app/src/main/AndroidManifest.xml
-            echo "Updated AndroidManifest.xml"
-          else
-            echo "⚠️ AndroidManifest.xml not found – skipping"
-          fi
+          cat > app/src/main/AndroidManifest.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="{{PACKAGE_NAME}}">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <application
+                  android:allowBackup="true"
+                  android:label="{{APP_NAME}}"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
+                  <activity android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+          echo "✅ AndroidManifest.xml created"
 
-          # Update app/build.gradle if it exists
-          if [ -f app/build.gradle ]; then
-            sed -i "s/namespace \".*\"/namespace \"$CUSTOM_PACKAGE\"/" app/build.gradle
-            sed -i "s/applicationId \".*\"/applicationId \"$CUSTOM_PACKAGE\"/" app/build.gradle
-            echo "Updated app/build.gradle"
-          else
-            echo "⚠️ app/build.gradle not found – skipping"
-          fi
-
-          # Update Java files if the directory exists
-          if [ -d app/src/main/java ]; then
-            find app/src/main/java -name "*.java" -exec sed -i "s/package .*;/package $CUSTOM_PACKAGE;/g" {} \;
-            echo "Updated Java files"
-          else
-            echo "⚠️ app/src/main/java not found – skipping (no Java files to update)"
-          fi
-
-          # Update strings.xml if it exists
-          if [ -f app/src/main/res/values/strings.xml ]; then
-            sed -i "s/<string name=\"app_name\">.*<\/string>/<string name=\"app_name\">$CUSTOM_APPNAME<\/string>/" app/src/main/res/values/strings.xml
-            echo "Updated strings.xml"
-          else
-            echo "⚠️ strings.xml not found – skipping"
-          fi
-
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
-      - name: Setup Gradle wrapper (version 8.5)
+      - name: Create MainActivity.java
         run: |
-          if [ ! -f gradlew ]; then
-            gradle wrapper --gradle-version 8.5 --distribution-type bin
-            chmod +x gradlew
-          else
-            chmod +x gradlew
-          fi
+          PKG="${{ github.event.inputs.default_package }}"
+          PKG_PATH=$(echo "$PKG" | tr '.' '/')
+          cat > app/src/main/java/$PKG_PATH/MainActivity.java << 'EOF'
+          package {{PACKAGE_NAME}};
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon
+          import android.os.Bundle;
+          import android.widget.TextView;
+          import androidx.appcompat.app.AppCompatActivity;
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: System-Pro-APK
-          path: app/build/outputs/apk/debug/*.apk
-          retention-days: 7
+          public class MainActivity extends AppCompatActivity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  TextView tv = new TextView(this);
+                  tv.setText("Hello from {{APP_NAME}}!");
+                  tv.setTextSize(24);
+                  setContentView(tv);
+              }
+          }
+          EOF
+          echo "✅ MainActivity.java created"
+
+      - name: Create activity_main.xml
+        run: |
+          cat > app/src/main/res/layout/activity_main.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent" />
+          EOF
+          echo "✅ activity_main.xml created"
+
+      - name: Create strings.xml
+        run: |
+          cat > app/src/main/res/values/strings.xml << 'EOF'
+          <resources>
+              <string name="app_name">{{APP_NAME}}</string>
+          </resources>
+          EOF
+          echo "✅ strings.xml created"
+
+      - name: Create colors.xml
+        run: |
+          cat > app/src/main/res/values/colors.xml << 'EOF'
+          <resources>
+              <color name="colorPrimary">#6200EE</color>
+              <color name="colorPrimaryDark">#3700B3</color>
+              <color name="colorAccent">#03DAC5</color>
+          </resources>
+          EOF
+          echo "✅ colors.xml created"
+
+      - name: Create themes.xml
+        run: |
+          cat > app/src/main/res/values/themes.xml << 'EOF'
+          <resources>
+              <style name="Theme.AppCompat.Light.DarkActionBar" parent="Theme.AppCompat.Light.DarkActionBar">
+                  <item name="colorPrimary">@color/colorPrimary</item>
+                  <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+                  <item name="colorAccent">@color/colorAccent</item>
+              </style>
+          </resources>
+          EOF
+          echo "✅ themes.xml created"
+
+      - name: Create dummy icons
+        run: |
+          DUMMY_ICON_B64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            echo "$DUMMY_ICON_B64" | base64 -d > app/src/main/res/mipmap-$density/ic_launcher.png
+            cp app/src/main/res/mipmap-$density/ic_launcher.png app/src/main/res/mipmap-$density/ic_launcher_round.png
+          done
+          echo "✅ Dummy icons created"
+
+      - name: Create app/build.gradle
+        run: |
+          cat > app/build.gradle << 'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace '{{PACKAGE_NAME}}'
+              compileSdk 34
+
+              defaultConfig {
+                  applicationId '{{PACKAGE_NAME}}'
+                  minSdk 21
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                  }
+              }
+          }
+
+          dependencies {
+              implementation 'androidx.appcompat:appcompat:1.6.1'
+          }
+          EOF
+          echo "✅ app/build.gradle created"
+
+      - name: Create project build.gradle
+        run: |
+          cat > build.gradle << 'EOF'
+          buildscript {
+              repositories { google(); mavenCentral() }
+              dependencies { classpath 'com.android.tools.build:gradle:8.3.2' }
+          }
+          allprojects { repositories { google(); mavenCentral() } }
+          EOF
+          echo "✅ build.gradle created"
+
+      - name: Create settings.gradle
+        run: |
+          cat > settings.gradle << 'EOF'
+          rootProject.name = "{{APP_NAME}}"
+          include ':app'
+          EOF
+          echo "✅ settings.gradle created"
+
+      - name: Create gradle.properties
+        run: |
+          cat > gradle.properties << 'EOF'
+          org.gradle.jvmargs=-Xmx2048m
+          android.useAndroidX=true
+          android.enableJetifier=true
+          EOF
+          echo "✅ gradle.properties created"
+
+      - name: Create README.md
+        run: |
+          cat > README.md << 'EOF'
+          # Android Master Template
+
+          This repository is a template for Android apps built with Gradle 8.5 and AGP 8.3.2.
+
+          **Placeholders used:**
+          - `{{PACKAGE_NAME}}` - Java package name
+          - `{{PACKAGE_PATH}}` - Package path with slashes
+          - `{{APP_NAME}}` - Application display name
+
+          When you generate a new repository from this template, these placeholders will be replaced automatically by the System Pro UI.
+          EOF
+          echo "✅ README.md created"
+
+      - name: Commit and push all files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Add complete Android project structure with placeholders" || echo "No changes to commit"
+          git push
