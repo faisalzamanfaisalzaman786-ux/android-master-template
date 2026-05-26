@@ -1,231 +1,48 @@
-name: Create Android Project Structure
+name: System Pro Build APK
 
 on:
+  repository_dispatch:
+    types: [android_full_build]
   workflow_dispatch:
-    inputs:
-      default_package:
-        description: 'Default package name (e.g., com.template.app)'
-        required: false
-        default: 'com.template.app'
-        type: string
-      default_app_name:
-        description: 'Default app name'
-        required: false
-        default: 'TemplateApp'
-        type: string
 
 jobs:
-  create-structure:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Create Android project directories
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Setup Gradle wrapper (version 8.7)
         run: |
-          PKG="${{ github.event.inputs.default_package }}"
-          APP_NAME="${{ github.event.inputs.default_app_name }}"
-          PKG_PATH=$(echo "$PKG" | tr '.' '/')
+          if [ ! -f gradlew ]; then
+            gradle wrapper --gradle-version 8.7 --distribution-type bin
+            chmod +x gradlew
+          else
+            chmod +x gradlew
+          fi
 
-          echo "Using package: $PKG"
-          echo "Package path: $PKG_PATH"
-          echo "App name: $APP_NAME"
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon
 
-          mkdir -p app/src/main/java/$PKG_PATH
-          mkdir -p app/src/main/res/layout
-          mkdir -p app/src/main/res/values
-          mkdir -p app/src/main/res/mipmap-mdpi
-          mkdir -p app/src/main/res/mipmap-hdpi
-          mkdir -p app/src/main/res/mipmap-xhdpi
-          mkdir -p app/src/main/res/mipmap-xxhdpi
-          mkdir -p app/src/main/res/mipmap-xxxhdpi
-
-          echo "✅ Directories created"
-
-      - name: Create AndroidManifest.xml
-        run: |
-          cat > app/src/main/AndroidManifest.xml << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-              package="{{PACKAGE_NAME}}">
-              <uses-permission android:name="android.permission.INTERNET" />
-              <application
-                  android:allowBackup="true"
-                  android:label="{{APP_NAME}}"
-                  android:icon="@mipmap/ic_launcher"
-                  android:roundIcon="@mipmap/ic_launcher_round"
-                  android:theme="@style/Theme.AppCompat.Light.DarkActionBar">
-                  <activity android:name=".MainActivity"
-                      android:exported="true">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
-          EOF
-          echo "✅ AndroidManifest.xml created"
-
-      - name: Create MainActivity.java
-        run: |
-          PKG="${{ github.event.inputs.default_package }}"
-          PKG_PATH=$(echo "$PKG" | tr '.' '/')
-          cat > app/src/main/java/$PKG_PATH/MainActivity.java << 'EOF'
-          package {{PACKAGE_NAME}};
-
-          import android.os.Bundle;
-          import android.widget.TextView;
-          import androidx.appcompat.app.AppCompatActivity;
-
-          public class MainActivity extends AppCompatActivity {
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  TextView tv = new TextView(this);
-                  tv.setText("Hello from {{APP_NAME}}!");
-                  tv.setTextSize(24);
-                  setContentView(tv);
-              }
-          }
-          EOF
-          echo "✅ MainActivity.java created"
-
-      - name: Create activity_main.xml
-        run: |
-          cat > app/src/main/res/layout/activity_main.xml << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-              android:layout_width="match_parent"
-              android:layout_height="match_parent" />
-          EOF
-          echo "✅ activity_main.xml created"
-
-      - name: Create strings.xml
-        run: |
-          cat > app/src/main/res/values/strings.xml << 'EOF'
-          <resources>
-              <string name="app_name">{{APP_NAME}}</string>
-          </resources>
-          EOF
-          echo "✅ strings.xml created"
-
-      - name: Create colors.xml
-        run: |
-          cat > app/src/main/res/values/colors.xml << 'EOF'
-          <resources>
-              <color name="colorPrimary">#6200EE</color>
-              <color name="colorPrimaryDark">#3700B3</color>
-              <color name="colorAccent">#03DAC5</color>
-          </resources>
-          EOF
-          echo "✅ colors.xml created"
-
-      - name: Create themes.xml
-        run: |
-          cat > app/src/main/res/values/themes.xml << 'EOF'
-          <resources>
-              <style name="Theme.AppCompat.Light.DarkActionBar" parent="Theme.AppCompat.Light.DarkActionBar">
-                  <item name="colorPrimary">@color/colorPrimary</item>
-                  <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
-                  <item name="colorAccent">@color/colorAccent</item>
-              </style>
-          </resources>
-          EOF
-          echo "✅ themes.xml created"
-
-      - name: Create dummy icons
-        run: |
-          DUMMY_ICON_B64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            echo "$DUMMY_ICON_B64" | base64 -d > app/src/main/res/mipmap-$density/ic_launcher.png
-            cp app/src/main/res/mipmap-$density/ic_launcher.png app/src/main/res/mipmap-$density/ic_launcher_round.png
-          done
-          echo "✅ Dummy icons created"
-
-      - name: Create app/build.gradle
-        run: |
-          cat > app/build.gradle << 'EOF'
-          plugins {
-              id 'com.android.application'
-          }
-
-          android {
-              namespace '{{PACKAGE_NAME}}'
-              compileSdk 34
-
-              defaultConfig {
-                  applicationId '{{PACKAGE_NAME}}'
-                  minSdk 21
-                  targetSdk 34
-                  versionCode 1
-                  versionName "1.0"
-              }
-
-              buildTypes {
-                  release {
-                      minifyEnabled false
-                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-                  }
-              }
-          }
-
-          dependencies {
-              implementation 'androidx.appcompat:appcompat:1.6.1'
-          }
-          EOF
-          echo "✅ app/build.gradle created"
-
-      - name: Create project build.gradle
-        run: |
-          cat > build.gradle << 'EOF'
-          buildscript {
-              repositories { google(); mavenCentral() }
-              dependencies { classpath 'com.android.tools.build:gradle:8.3.2' }
-          }
-          allprojects { repositories { google(); mavenCentral() } }
-          EOF
-          echo "✅ build.gradle created"
-
-      - name: Create settings.gradle
-        run: |
-          cat > settings.gradle << 'EOF'
-          rootProject.name = "{{APP_NAME}}"
-          include ':app'
-          EOF
-          echo "✅ settings.gradle created"
-
-      - name: Create gradle.properties
-        run: |
-          cat > gradle.properties << 'EOF'
-          org.gradle.jvmargs=-Xmx2048m
-          android.useAndroidX=true
-          android.enableJetifier=true
-          EOF
-          echo "✅ gradle.properties created"
-
-      - name: Create README.md
-        run: |
-          cat > README.md << 'EOF'
-          # Android Master Template
-
-          This repository is a template for Android apps built with Gradle 8.5 and AGP 8.3.2.
-
-          **Placeholders used:**
-          - `{{PACKAGE_NAME}}` - Java package name
-          - `{{PACKAGE_PATH}}` - Package path with slashes
-          - `{{APP_NAME}}` - Application display name
-
-          When you generate a new repository from this template, these placeholders will be replaced automatically by the System Pro UI.
-          EOF
-          echo "✅ README.md created"
-
-      - name: Commit and push all files
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .
-          git commit -m "Add complete Android project structure with placeholders" || echo "No changes to commit"
-          git push
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: System-Pro-APK
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 7
