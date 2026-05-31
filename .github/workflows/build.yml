@@ -43,14 +43,21 @@ jobs:
           echo "TARGET_SDK=$TARGET_SDK" >> $GITHUB_ENV
           echo "USE_PROGUARD=$USE_PROGUARD" >> $GITHUB_ENV
 
-      - name: Create fresh Flutter project (Kotlin default)
+      - name: Create fresh Flutter project with sanitized name
         run: |
           PKG="${{ env.PACKAGE_NAME }}"
           ORG=$(echo "$PKG" | rev | cut -d. -f2- | rev)
-          PROJ=$(echo "$PKG" | rev | cut -d. -f1 | rev)
+          # Get raw project name
+          RAW_PROJ=$(echo "$PKG" | rev | cut -d. -f1 | rev)
+          # Sanitize project name according to Dart rules
+          PROJ=$(echo "$RAW_PROJ" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g' | sed 's/^[0-9]/_&/')
+          # Handle reserved keywords
+          if [[ "$PROJ" == "new" || "$PROJ" == "final" || "$PROJ" == "default" ]]; then
+              PROJ="${PROJ}_app"
+          fi
           rm -rf android ios .dart_tool build
           flutter create --org "$ORG" --project-name "$PROJ" --platforms=android .
-          echo "✅ Fresh Flutter project created"
+          echo "✅ Fresh Flutter project created with sanitized name: $PROJ"
 
       - name: Write main.dart from payload
         run: |
