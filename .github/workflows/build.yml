@@ -41,11 +41,9 @@ jobs:
           PKG="${{ env.PACKAGE_NAME }}"
           ORG=$(echo "$PKG" | rev | cut -d. -f2- | rev)
           PROJ=$(echo "$PKG" | rev | cut -d. -f1 | rev)
-          # Sanitize project name
           PROJ=$(echo "$PROJ" | tr '-' '_' | sed 's/^[0-9]/_&/')
           rm -rf android ios .dart_tool build
           flutter create --org "$ORG" --project-name "$PROJ" --platforms=android .
-          echo "✅ Project created"
 
       - name: Write main.dart from payload
         run: |
@@ -69,12 +67,28 @@ jobs:
       - name: Use repository pubspec.yaml
         run: |
           if [ ! -f "pubspec.yaml" ]; then
-            echo "❌ pubspec.yaml not found in repository root"
+            echo "❌ pubspec.yaml not found in repository"
             exit 1
           fi
           flutter pub get
 
-      - name: Generate build.gradle (Groovy) from scratch
+      # ✅ یہ نیا اسٹیپ ہے جو مسئلہ حل کرے گا
+      - name: Patch image_gallery_saver plugin (if present)
+        run: |
+          PLUGIN_DIR="$HOME/.pub-cache/hosted/pub.dev/image_gallery_saver-2.0.3"
+          if [ -d "$PLUGIN_DIR" ]; then
+            BUILD_FILE="$PLUGIN_DIR/android/build.gradle"
+            if [ -f "$BUILD_FILE" ]; then
+              if ! grep -q "namespace" "$BUILD_FILE"; then
+                sed -i '/android {/a \    namespace "com.example.imagegallerysaver"' "$BUILD_FILE"
+                echo "✅ Patched image_gallery_saver"
+              fi
+            fi
+          else
+            echo "ℹ️ image_gallery_saver not found, skipping patch"
+          fi
+
+      - name: Generate build.gradle (Groovy)
         run: |
           cat > android/build.gradle <<'EOF'
           buildscript {
