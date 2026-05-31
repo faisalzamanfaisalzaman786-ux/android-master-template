@@ -1,19 +1,20 @@
-name: Filter App Builder
+name: 🔧 Repair Flutter Structure
 
 on:
-  repository_dispatch:
-    types: [filter_app_build]
+  workflow_dispatch:        # Manual trigger from GitHub UI
+  push:
+    branches: [ main, master ]
+    paths:
+      - '.github/workflows/repair_structure.yml'
 
 jobs:
-  build:
+  repair:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout repository (base template)
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -22,112 +23,400 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Install dependencies (if pubspec.yaml provided)
+      - name: Create Flutter project if missing
+        run: |
+          if [ ! -f "pubspec.yaml" ]; then
+            echo "📁 No Flutter project found. Creating new one..."
+            flutter create --org com.filter --project-name filter_app .
+          else
+            echo "✅ Flutter project already exists."
+          fi
+
+      - name: Ensure required directories exist
+        run: |
+          mkdir -p lib
+          mkdir -p android/app/src/main
+          mkdir -p assets
+
+      - name: Write default main.dart (filter app base)
+        run: |
+          cat > lib/main.dart << 'EOF'
+          import 'dart:io';
+          import 'dart:typed_data';
+          import 'package:flutter/material.dart';
+          import 'package:camera/camera.dart';
+          import 'package:image_picker/image_picker.dart';
+          import 'package:gallery_saver/gallery_saver.dart';
+          import 'package:permission_handler/permission_handler.dart';
+          import 'package:image/image.dart' as img;
+
+          void main() async {
+            WidgetsFlutterBinding.ensureInitialized();
+            final cameras = await availableCameras();
+            runApp(FilterApp(cameras: cameras));
+          }
+
+          class FilterApp extends StatelessWidget {
+            final List<CameraDescription> cameras;
+            const FilterApp({super.key, required this.cameras});
+
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: 'Pro Camera',
+                theme: ThemeData.dark().copyWith(
+                  colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: Brightness.dark),
+                  useMaterial3: true,
+                ),
+                home: CameraScreen(cameras: cameras),
+              );
+            }
+          }
+
+          class CameraScreen extends StatefulWidget {
+            final List<CameraDescription> cameras;
+            const CameraScreen({super.key, required this.cameras});
+
+            @override
+            State<CameraScreen> createState() => _CameraScreenState();
+          }
+
+          class _CameraScreenState extends State<CameraScreen> {
+            CameraController? _controller;
+            bool _isCameraReady = false;
+            int _currentCameraIndex = 0;
+            double _zoomLevel = 0.0;
+            bool _nightVisionEnabled = false;
+            bool _isSaving = false;
+
+            @override
+            void initState() {
+              super.initState();
+              _initCamera();
+            }
+
+            Future<void> _initCamera() async {
+              final status = await Permission.camera.request();
+              if (!status.isGranted) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Camera permission required')),
+                  );
+                }
+                return;
+              }
+              if (widget.cameras.isEmpty) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('No camera found')),
+                  );
+                }
+                return;
+              }
+              int index = _currentCameraIndex;
+              if (index >= widget.cameras.length) index = 0;
+              final camera = widget.cameras[index];
+              _controller = CameraController(camera, ResolutionPreset.medium, enableAudio: false);
+              try {
+                await _controller!.initialize();
+                final maxZoom = _controller!.value.maxZoomLevel;
+                if (maxZoom > 1.0) {
+                  await _controller!.setZoomLevel(_zoomLevel);
+                }
+                if (mounted) {
+                  setState(() {
+                    _isCameraReady = true;
+                  });
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Camera error: $e')),
+                  );
+                }
+              }
+            }
+
+            Future<void> _toggleCamera() async {
+              if (widget.cameras.length < 2) return;
+              await _controller?.dispose();
+              _isCameraReady = false;
+              setState(() {});
+              _currentCameraIndex = _currentCameraIndex == 0 ? 1 : 0;
+              await _initCamera();
+            }
+
+            Future<void> _takePictureAndSave() async {
+              if (!_isCameraReady || _controller == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Camera not ready')),
+                );
+                return;
+              }
+              setState(() => _isSaving = true);
+              try {
+                final XFile rawImage = await _controller!.takePicture();
+                final bytes = await rawImage.readAsBytes();
+                Uint8List finalBytes;
+                if (_nightVisionEnabled) {
+                  finalBytes = await _applyGreenFilter(bytes);
+                } else {
+                  finalBytes = bytes;
+                }
+                final result = await GallerySaver.saveImage(finalBytes);
+                if (result == true) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Image saved to gallery!')),
+                    );
+                  }
+                } else {
+                  throw Exception('Failed to save image');
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error: $e')),
+                  );
+                }
+              } finally {
+                if (mounted) setState(() => _isSaving = false);
+              }
+            }
+
+            Future<Uint8List> _applyGreenFilter(Uint8List imageBytes) async {
+              img.Image? image = img.decodeImage(imageBytes);
+              if (image == null) return imageBytes;
+              for (int i = 0; i < image.length; i++) {
+                final pixel = image[i];
+                final r = pixel.r;
+                final g = pixel.g;
+                final b = pixel.b;
+                int newR = (r * 0.3).toInt();
+                int newG = (g * 1.5).toInt();
+                int newB = (b * 0.3).toInt();
+                image[i] = img.ColorRgb(
+                  newR.clamp(0, 255),
+                  newG.clamp(0, 255),
+                  newB.clamp(0, 255),
+                );
+              }
+              return Uint8List.fromList(img.encodePng(image));
+            }
+
+            Future<void> _pickFromGallery() async {
+              final status = await Permission.photos.request();
+              if (!status.isGranted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Storage permission required')),
+                );
+                return;
+              }
+              final picker = ImagePicker();
+              final picked = await picker.pickImage(source: ImageSource.gallery);
+              if (picked != null) {
+                final bytes = await picked.readAsBytes();
+                final saved = await GallerySaver.saveImage(bytes);
+                if (saved == true) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Image saved to gallery!')),
+                  );
+                }
+              }
+            }
+
+            @override
+            void dispose() {
+              _controller?.dispose();
+              super.dispose();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                appBar: AppBar(
+                  title: const Text('Pro Camera'),
+                  actions: [
+                    if (widget.cameras.length > 1)
+                      IconButton(
+                        icon: const Icon(Icons.flip_camera_android),
+                        onPressed: _toggleCamera,
+                        tooltip: 'Switch Camera',
+                      ),
+                    IconButton(
+                      icon: Icon(_nightVisionEnabled ? Icons.brightness_3 : Icons.brightness_4),
+                      onPressed: () => setState(() => _nightVisionEnabled = !_nightVisionEnabled),
+                      tooltip: 'Night Vision',
+                    ),
+                  ],
+                ),
+                body: Stack(
+                  children: [
+                    Column(
+                      children: [
+                        Expanded(
+                          child: _isCameraReady && _controller != null
+                              ? _buildCameraPreview()
+                              : const Center(child: CircularProgressIndicator()),
+                        ),
+                        if (_isCameraReady && (_controller?.value.maxZoomLevel ?? 1.0) > 1.0)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 20.0),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.zoom_out),
+                                Expanded(
+                                  child: Slider(
+                                    value: _zoomLevel,
+                                    min: 0.0,
+                                    max: _controller!.value.maxZoomLevel,
+                                    onChanged: (val) async {
+                                      setState(() => _zoomLevel = val);
+                                      await _controller?.setZoomLevel(val);
+                                    },
+                                  ),
+                                ),
+                                const Icon(Icons.zoom_in),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(height: 20),
+                      ],
+                    ),
+                    Align(
+                      alignment: Alignment.bottomCenter,
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 30),
+                        child: FloatingActionButton.extended(
+                          onPressed: _isSaving ? null : _takePictureAndSave,
+                          icon: _isSaving ? const CircularProgressIndicator(color: Colors.white) : const Icon(Icons.camera_alt),
+                          label: Text(_isSaving ? 'Saving...' : 'Capture'),
+                          backgroundColor: Colors.blueAccent,
+                        ),
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.bottomLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 20, bottom: 40),
+                        child: FloatingActionButton.small(
+                          onPressed: _pickFromGallery,
+                          child: const Icon(Icons.photo_library),
+                          tooltip: 'Pick from Gallery',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            Widget _buildCameraPreview() {
+              Widget preview = CameraPreview(_controller!);
+              if (_nightVisionEnabled) {
+                preview = ColorFiltered(
+                  colorFilter: const ColorFilter.matrix([
+                    0.3, 0.0, 0.0, 0.0, 0.0,
+                    0.0, 1.5, 0.0, 0.0, 0.0,
+                    0.0, 0.0, 0.3, 0.0, 0.0,
+                    0.0, 0.0, 0.0, 1.0, 0.0,
+                  ]),
+                  child: preview,
+                );
+              }
+              return preview;
+            }
+          }
+          EOF
+          echo "✅ Default main.dart created"
+
+      - name: Ensure AndroidManifest.xml has correct permissions
+        run: |
+          cat > android/app/src/main/AndroidManifest.xml << 'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.filter.app">
+              <uses-permission android:name="android.permission.CAMERA" />
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+              <uses-permission android:name="android.permission.INTERNET" />
+              
+              <queries>
+                  <intent>
+                      <action android:name="android.media.action.IMAGE_CAPTURE" />
+                  </intent>
+              </queries>
+
+              <application
+                  android:label="Filter Master"
+                  android:icon="@mipmap/ic_launcher"
+                  android:requestLegacyExternalStorage="true"
+                  android:usesCleartextTraffic="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:theme="@style/LaunchTheme"
+                      android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+                      android:hardwareAccelerated="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <meta-data
+                          android:name="io.flutter.embedding.android.NormalTheme"
+                          android:resource="@style/NormalTheme" />
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <meta-data
+                      android:name="flutterEmbedding"
+                      android:value="2" />
+              </application>
+          </manifest>
+          EOF
+          echo "✅ AndroidManifest.xml updated with permissions"
+
+      - name: Update pubspec.yaml with required dependencies
+        run: |
+          # Check if dependencies already exist, add if missing
+          if ! grep -q "camera:" pubspec.yaml; then
+            echo "  camera: ^0.11.1" >> pubspec.yaml
+          fi
+          if ! grep -q "image_picker:" pubspec.yaml; then
+            echo "  image_picker: ^1.1.2" >> pubspec.yaml
+          fi
+          if ! grep -q "permission_handler:" pubspec.yaml; then
+            echo "  permission_handler: ^12.0.1" >> pubspec.yaml
+          fi
+          if ! grep -q "gallery_saver:" pubspec.yaml; then
+            echo "  gallery_saver: ^2.3.2" >> pubspec.yaml
+          fi
+          if ! grep -q "image:" pubspec.yaml; then
+            echo "  image: ^4.3.0" >> pubspec.yaml
+          fi
+          # Also ensure cupertino_icons is there
+          if ! grep -q "cupertino_icons:" pubspec.yaml; then
+            echo "  cupertino_icons: ^1.0.8" >> pubspec.yaml
+          fi
+          echo "✅ pubspec.yaml dependencies updated"
+
+      - name: Run flutter pub get
         run: flutter pub get
+
+      - name: Build test APK (optional)
+        run: flutter build apk --debug
         continue-on-error: true
 
-      - name: Decode and replace main.dart
-        env:
-          MAIN_DART_B64: ${{ github.event.client_payload.source_files.main_dart }}
-        run: |
-          if [ -n "$MAIN_DART_B64" ]; then
-            echo "$MAIN_DART_B64" | base64 -d > lib/main.dart
-            echo "✅ main.dart replaced"
-          else
-            echo "⚠️ No main.dart in payload, keeping existing"
-          fi
-
-      - name: Decode and replace AndroidManifest.xml
-        env:
-          MANIFEST_B64: ${{ github.event.client_payload.source_files.android_manifest }}
-        run: |
-          if [ -n "$MANIFEST_B64" ]; then
-            mkdir -p android/app/src/main
-            echo "$MANIFEST_B64" | base64 -d > android/app/src/main/AndroidManifest.xml
-            echo "✅ AndroidManifest.xml replaced"
-          else
-            echo "⚠️ No AndroidManifest.xml in payload"
-          fi
-
-      - name: Decode and replace pubspec.yaml (if sent)
-        env:
-          PUBSPEC_B64: ${{ github.event.client_payload.source_files.pubspec_yaml }}
-        run: |
-          if [ -n "$PUBSPEC_B64" ]; then
-            echo "$PUBSPEC_B64" | base64 -d > pubspec.yaml
-            echo "✅ pubspec.yaml replaced"
-            flutter pub get
-          fi
-
-      - name: Update package name & app display name from config
-        env:
-          PACKAGE_NAME: ${{ github.event.client_payload.build_config.package_name }}
-          APP_NAME: ${{ github.event.client_payload.build_config.app_display_name }}
-        run: |
-          if [ -n "$PACKAGE_NAME" ]; then
-            # Update package name in android/app/build.gradle
-            sed -i "s/applicationId \".*\"/applicationId \"$PACKAGE_NAME\"/" android/app/build.gradle
-            # Also update AndroidManifest package attribute if needed
-            sed -i "s/package=\".*\"/package=\"$PACKAGE_NAME\"/" android/app/src/main/AndroidManifest.xml
-          fi
-          if [ -n "$APP_NAME" ]; then
-            sed -i "s/android:label=\".*\"/android:label=\"$APP_NAME\"/" android/app/src/main/AndroidManifest.xml
-          fi
-
-      - name: Apply ProGuard/R8 setting
-        env:
-          USE_PROGUARD: ${{ github.event.client_payload.build_config.use_proguard }}
-        run: |
-          if [ "$USE_PROGUARD" = "true" ]; then
-            echo "Enabling ProGuard"
-            # Ensure minifyEnabled is true
-            sed -i 's/minifyEnabled false/minifyEnabled true/' android/app/build.gradle
-          else
-            echo "Disabling ProGuard"
-            sed -i 's/minifyEnabled true/minifyEnabled false/' android/app/build.gradle
-          fi
-
-      - name: Decode and replace app icon (if provided)
-        env:
-          ICON_B64: ${{ github.event.client_payload.assets.app_icon_base64 }}
-        run: |
-          if [ -n "$ICON_B64" ]; then
-            echo "Decoding app icon..."
-            mkdir -p android/app/src/main/res/mipmap-hdpi
-            mkdir -p android/app/src/main/res/mipmap-mdpi
-            mkdir -p android/app/src/main/res/mipmap-xhdpi
-            mkdir -p android/app/src/main/res/mipmap-xxhdpi
-            mkdir -p android/app/src/main/res/mipmap-xxxhdpi
-            # Convert base64 to temporary PNG
-            echo "$ICON_B64" | base64 -d > /tmp/icon.png
-            # Use ImageMagick to resize if available (install via apt)
-            sudo apt-get update && sudo apt-get install -y imagemagick
-            convert /tmp/icon.png -resize 48x48 android/app/src/main/res/mipmap-mdpi/ic_launcher.png
-            convert /tmp/icon.png -resize 72x72 android/app/src/main/res/mipmap-hdpi/ic_launcher.png
-            convert /tmp/icon.png -resize 96x96 android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
-            convert /tmp/icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-            convert /tmp/icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-            echo "✅ App icon replaced"
-          else
-            echo "No custom icon provided, using default"
-          fi
-
-      - name: Build APK (release)
-        run: |
-          flutter build apk --release --split-per-abi
-        continue-on-error: false
-
-      - name: Upload APK artifacts
+      - name: Upload test APK as artifact (optional)
         uses: actions/upload-artifact@v4
         with:
-          name: filter-app-apks
-          path: build/app/outputs/flutter-apk/*.apk
-          retention-days: 7
-
-      - name: Upload debug APK (optional)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-apk
+          name: test-debug-apk
           path: build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 3
+
+      - name: Commit and push changes (if any)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add lib/main.dart android/app/src/main/AndroidManifest.xml pubspec.yaml
+          git diff --staged --quiet || git commit -m "🔧 Repair structure: add Flutter project files"
+          git push
+        continue-on-error: true
