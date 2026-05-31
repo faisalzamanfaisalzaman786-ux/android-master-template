@@ -1,5 +1,5 @@
 name: filter_app
-description: A powerful filter application with extensive permissions support.
+description: A powerful filter application.
 version: 1.0.0+1
 publish_to: none
 
@@ -9,65 +9,13 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
-  # Core Permissions & Platform
-  permission_handler: ^12.0.1
-  device_info_plus: ^11.0.0
-  package_info_plus: ^8.0.0
-  connectivity_plus: ^6.0.3
-  network_info_plus: ^6.0.1
-
-  # Camera, Gallery, Image
   camera: ^0.11.1
   image_picker: ^1.1.2
-  image_gallery_saver: ^2.0.3
-  image: ^4.3.0
-  path_provider: ^2.1.5
-  file_picker: ^8.1.2
-
-  # Sharing & Storage
+  permission_handler: ^12.0.1
   share_plus: ^10.1.0
-  local_notifications: ^18.0.1
-  flutter_local_notifications: ^18.0.1
-
-  # Screen Sharing & Media Projection
-  screen_share_plugin: ^0.0.2
-  quickrtc_flutter_client: ^1.0.0
-
-  # Bluetooth & Nearby
-  flutter_blue_plus: ^1.35.0
-  nearby_service: ^0.1.1
-  wifi_direct_plugin: ^0.0.4
-
-  # Location & Maps
-  geolocator: ^13.0.1
-  background_location_2: ^2.0.5
-
-  # Microphone & Speech
-  speech_to_text: ^7.0.0
-  voice_recognition_flutter: ^3.0.0
-
-  # Sensors (Accelerometer, Gyroscope, etc.)
-  sensors_plus: ^6.0.1
-
-  # Battery & System
-  battery_plus: ^6.1.0
-  brightness_plus: ^0.0.3
-
-  # Database
-  sqflite: ^2.4.1
-  drift: ^2.21.0
-  drift_flutter: ^0.2.0
-
-  # State Management & Utilities
-  provider: ^6.1.2
-  shared_preferences: ^2.3.5
-  webview_flutter: ^4.13.0
-  url_launcher: ^6.3.1
-
-  # UI
+  path_provider: ^2.1.5
+  image: ^4.3.0
   cupertino_icons: ^1.0.8
-  google_fonts: ^6.2.1
 
 dev_dependencies:
   flutter_test:
