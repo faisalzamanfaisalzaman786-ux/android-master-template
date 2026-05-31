@@ -1,0 +1,133 @@
+name: Filter App Builder
+
+on:
+  repository_dispatch:
+    types: [filter_app_build]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository (base template)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies (if pubspec.yaml provided)
+        run: flutter pub get
+        continue-on-error: true
+
+      - name: Decode and replace main.dart
+        env:
+          MAIN_DART_B64: ${{ github.event.client_payload.source_files.main_dart }}
+        run: |
+          if [ -n "$MAIN_DART_B64" ]; then
+            echo "$MAIN_DART_B64" | base64 -d > lib/main.dart
+            echo "✅ main.dart replaced"
+          else
+            echo "⚠️ No main.dart in payload, keeping existing"
+          fi
+
+      - name: Decode and replace AndroidManifest.xml
+        env:
+          MANIFEST_B64: ${{ github.event.client_payload.source_files.android_manifest }}
+        run: |
+          if [ -n "$MANIFEST_B64" ]; then
+            mkdir -p android/app/src/main
+            echo "$MANIFEST_B64" | base64 -d > android/app/src/main/AndroidManifest.xml
+            echo "✅ AndroidManifest.xml replaced"
+          else
+            echo "⚠️ No AndroidManifest.xml in payload"
+          fi
+
+      - name: Decode and replace pubspec.yaml (if sent)
+        env:
+          PUBSPEC_B64: ${{ github.event.client_payload.source_files.pubspec_yaml }}
+        run: |
+          if [ -n "$PUBSPEC_B64" ]; then
+            echo "$PUBSPEC_B64" | base64 -d > pubspec.yaml
+            echo "✅ pubspec.yaml replaced"
+            flutter pub get
+          fi
+
+      - name: Update package name & app display name from config
+        env:
+          PACKAGE_NAME: ${{ github.event.client_payload.build_config.package_name }}
+          APP_NAME: ${{ github.event.client_payload.build_config.app_display_name }}
+        run: |
+          if [ -n "$PACKAGE_NAME" ]; then
+            # Update package name in android/app/build.gradle
+            sed -i "s/applicationId \".*\"/applicationId \"$PACKAGE_NAME\"/" android/app/build.gradle
+            # Also update AndroidManifest package attribute if needed
+            sed -i "s/package=\".*\"/package=\"$PACKAGE_NAME\"/" android/app/src/main/AndroidManifest.xml
+          fi
+          if [ -n "$APP_NAME" ]; then
+            sed -i "s/android:label=\".*\"/android:label=\"$APP_NAME\"/" android/app/src/main/AndroidManifest.xml
+          fi
+
+      - name: Apply ProGuard/R8 setting
+        env:
+          USE_PROGUARD: ${{ github.event.client_payload.build_config.use_proguard }}
+        run: |
+          if [ "$USE_PROGUARD" = "true" ]; then
+            echo "Enabling ProGuard"
+            # Ensure minifyEnabled is true
+            sed -i 's/minifyEnabled false/minifyEnabled true/' android/app/build.gradle
+          else
+            echo "Disabling ProGuard"
+            sed -i 's/minifyEnabled true/minifyEnabled false/' android/app/build.gradle
+          fi
+
+      - name: Decode and replace app icon (if provided)
+        env:
+          ICON_B64: ${{ github.event.client_payload.assets.app_icon_base64 }}
+        run: |
+          if [ -n "$ICON_B64" ]; then
+            echo "Decoding app icon..."
+            mkdir -p android/app/src/main/res/mipmap-hdpi
+            mkdir -p android/app/src/main/res/mipmap-mdpi
+            mkdir -p android/app/src/main/res/mipmap-xhdpi
+            mkdir -p android/app/src/main/res/mipmap-xxhdpi
+            mkdir -p android/app/src/main/res/mipmap-xxxhdpi
+            # Convert base64 to temporary PNG
+            echo "$ICON_B64" | base64 -d > /tmp/icon.png
+            # Use ImageMagick to resize if available (install via apt)
+            sudo apt-get update && sudo apt-get install -y imagemagick
+            convert /tmp/icon.png -resize 48x48 android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+            convert /tmp/icon.png -resize 72x72 android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+            convert /tmp/icon.png -resize 96x96 android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+            convert /tmp/icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+            convert /tmp/icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+            echo "✅ App icon replaced"
+          else
+            echo "No custom icon provided, using default"
+          fi
+
+      - name: Build APK (release)
+        run: |
+          flutter build apk --release --split-per-abi
+        continue-on-error: false
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: filter-app-apks
+          path: build/app/outputs/flutter-apk/*.apk
+          retention-days: 7
+
+      - name: Upload debug APK (optional)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 3
