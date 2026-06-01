@@ -1,4 +1,4 @@
-name: Filter App Builder (Flutter 3.32.0 + Auto-Fix)
+name: Filter App Builder (Flutter 3.35.0 + Dart 3.10)
 
 on:
   repository_dispatch:
@@ -17,7 +17,7 @@ jobs:
           java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.32.0'   # ✅ Dart 3.10.0, supports latest packages
+          flutter-version: '3.35.0'   # ✅ Dart 3.10.0, supports latest packages
           channel: 'stable'
           cache: true
 
@@ -74,10 +74,10 @@ jobs:
               data = {}
               print("⚠️ YAML parsing error, will regenerate")
 
-          # Fix environment SDK constraint
+          # Fix environment SDK constraint to match Dart 3.10
           if 'environment' not in data or not isinstance(data['environment'], dict):
               data['environment'] = {}
-          data['environment']['sdk'] = '>=3.10.0 <4.0.0'   # Updated for Dart 3.10+
+          data['environment']['sdk'] = '>=3.10.0 <4.0.0'
 
           # Fix dependencies
           deps = data.get('dependencies', {})
@@ -149,7 +149,7 @@ jobs:
       - name: Create assets folder
         run: mkdir -p assets
 
-      # ========== RELEASE SIGNING ==========
+      # ========== RELEASE SIGNING (optional) ==========
       - name: Decode Keystore
         run: |
           if [ -n "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" ]; then
@@ -183,7 +183,7 @@ jobs:
             'tasks.register("clean", Delete) { delete rootProject.buildDir }' \
             > android/build.gradle
 
-      - name: Write app/build.gradle
+      - name: Write app/build.gradle (signed or debug)
         run: |
           if [ -f "android/key.properties" ]; then
             printf '%s\n' \
