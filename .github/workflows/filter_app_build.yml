@@ -54,10 +54,24 @@ jobs:
           mkdir -p android/app/src/main
           echo "$MANIFEST_B64" | base64 -d > android/app/src/main/AndroidManifest.xml
 
-      - name: Use repository pubspec.yaml
+      # ========== NEW: Write pubspec.yaml from UI payload ==========
+      - name: Write pubspec.yaml from payload
+        run: |
+          PUBSPEC_B64=$(jq -r '.source_files.pubspec_yaml // ""' payload.json)
+          if [ -n "$PUBSPEC_B64" ] && [ "$PUBSPEC_B64" != "null" ]; then
+            echo "📦 Writing pubspec.yaml from UI payload"
+            echo "$PUBSPEC_B64" | base64 -d > pubspec.yaml
+          else
+            echo "ℹ️ No pubspec.yaml in payload – will use repository's pubspec.yaml"
+          fi
+
+      - name: Use pubspec.yaml and get dependencies
         run: |
           [ ! -f "pubspec.yaml" ] && echo "❌ pubspec.yaml not found" && exit 1
           flutter pub get
+
+      - name: Create assets folder (avoid pubspec warning)
+        run: mkdir -p assets
 
       - name: Generate build.gradle
         run: |
@@ -131,7 +145,6 @@ jobs:
         run: |
           sed -i "s/android:label=\".*\"/android:label=\"${{ env.APP_NAME }}\"/" android/app/src/main/AndroidManifest.xml
 
-      # ---------- NEW: Apply custom app icon from UI payload ----------
       - name: Install ImageMagick (for icon resizing)
         run: sudo apt-get update && sudo apt-get install -y imagemagick
 
@@ -141,7 +154,6 @@ jobs:
           if [ -n "$ICON_B64" ] && [ "$ICON_B64" != "null" ]; then
             echo "✅ Custom icon found, applying..."
             echo "$ICON_B64" | base64 -d > /tmp/icon_raw.png
-            # Generate all mipmap densities
             for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
               case $density in
                 mdpi) size=48 ;;
@@ -157,7 +169,6 @@ jobs:
           else
             echo "ℹ️ No custom icon in payload – using default Flutter icon."
           fi
-      # ----------------------------------------------------------------
 
       - name: Build APK
         run: flutter build apk --release
