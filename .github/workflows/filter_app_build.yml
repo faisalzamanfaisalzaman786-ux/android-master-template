@@ -1,4 +1,4 @@
-name: Filter App Builder (Auto-Fix Everything - Robust)
+name: Filter App Builder (Python Auto-Fix)
 
 on:
   repository_dispatch:
@@ -61,57 +61,72 @@ jobs:
             echo "❌ No pubspec.yaml in payload" && exit 1
           fi
 
-      # ========== 1. AUTO-FIX PUBSPEC.YAML (ROBUST) ==========
-      - name: Auto-fix pubspec.yaml
+      # ========== PYTHON SCRIPT TO FIX PUBSPEC.YAML ROBUSTLY ==========
+      - name: Auto-fix pubspec.yaml with Python
         run: |
-          echo "🔧 Fixing pubspec.yaml (robust)..."
-          cp pubspec.yaml.raw pubspec.yaml
+          python3 << 'PYTHON_FIX'
+          import re, yaml, sys
+          with open('pubspec.yaml.raw', 'r') as f:
+              content = f.read()
+          try:
+              data = yaml.safe_load(content)
+          except:
+              # If YAML is malformed, we'll still try to fix environment section
+              data = {}
+              print("⚠️ YAML parsing error, will regenerate environment section")
 
-          # First, remove any existing environment.sdk line completely (if malformed)
-          sed -i '/^[[:space:]]*sdk:/d' pubspec.yaml
+          # Ensure environment section with correct sdk constraint
+          if 'environment' not in data or not isinstance(data['environment'], dict):
+              data['environment'] = {}
+          data['environment']['sdk'] = '>=3.5.0 <4.0.0'
 
-          # Ensure environment section exists
-          if ! grep -q "^environment:" pubspec.yaml; then
-            echo -e "\nenvironment:\n  sdk: \">=3.5.0 <4.0.0\"" >> pubspec.yaml
-          else
-            # Add proper sdk line under environment (if not already present after deletion)
-            if ! grep -q "^[[:space:]]*sdk:" pubspec.yaml; then
-              sed -i "/^environment:/a\  sdk: \">=3.5.0 <4.0.0\"" pubspec.yaml
-            fi
-          fi
+          # Fix each dependency: ensure latest stable version
+          # First, get latest versions from pub.dev for all dependencies
+          import subprocess, json
+          deps = data.get('dependencies', {})
+          new_deps = {}
+          for pkg, ver in deps.items():
+              if pkg in ['flutter', 'flutter_test', 'cupertino_icons']:
+                  new_deps[pkg] = ver
+                  continue
+              # Query pub.dev
+              result = subprocess.run(['curl', '-s', f'https://pub.dev/api/packages/{pkg}'], capture_output=True, text=True)
+              if result.returncode == 0:
+                  try:
+                      info = json.loads(result.stdout)
+                      latest = info.get('latest', {}).get('version')
+                      if latest:
+                          new_deps[pkg] = f'^{latest}'
+                          print(f"✅ {pkg} -> {latest}")
+                      else:
+                          new_deps[pkg] = ver
+                          print(f"⚠️ {pkg} no version found, keeping {ver}")
+                  except:
+                      new_deps[pkg] = ver
+              else:
+                  new_deps[pkg] = ver
+                  print(f"⚠️ {pkg} could not be checked, keeping {ver}")
+          data['dependencies'] = new_deps
 
-          # Fix dependencies
-          grep -E '^[ ]+[a-zA-Z_][a-zA-Z0-9_]*:' pubspec.yaml | while read line; do
-            pkg=$(echo "$line" | cut -d: -f1 | xargs)
-            if [[ "$pkg" == "flutter" ]] || [[ "$pkg" == "flutter_test" ]] || [[ "$pkg" == "cupertino_icons" ]] || [[ "$pkg" == *"_sdk"* ]]; then
-              continue
-            fi
-            echo "Checking $pkg ..."
-            latest=$(curl -s "https://pub.dev/api/packages/$pkg" | jq -r '.latest.version // ""')
-            if [ -n "$latest" ] && [ "$latest" != "null" ]; then
-              sed -i "s/^[ ]*$pkg:.*/  $pkg: ^$latest/" pubspec.yaml
-              echo "✅ Updated $pkg to ^$latest"
-            else
-              echo "⚠️ Package $pkg not found – keeping as is"
-            fi
-          done
+          # Write fixed pubspec.yaml
+          with open('pubspec.yaml', 'w') as f:
+              yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+          print("✅ pubspec.yaml fixed successfully")
+          PYTHON_FIX
 
-          echo "✅ pubspec.yaml is ready"
-
-      # ========== 2. AUTO-FIX ANDROID PERMISSIONS ==========
+      # ========== AUTO-FIX ANDROID PERMISSIONS ==========
       - name: Auto-fix Android permissions
         run: |
           echo "🔧 Adding missing permissions..."
           cp android/app/src/main/AndroidManifest.xml.raw android/app/src/main/AndroidManifest.xml
-
           REQUIRED_PERMS=(
             "android.permission.INTERNET"
             "android.permission.ACCESS_NETWORK_STATE"
           )
-          if grep -qi "camera\|Camera" lib/main.dart; then
+          if grep -qi "camera" lib/main.dart; then
             REQUIRED_PERMS+=("android.permission.CAMERA")
           fi
-          if grep -qi "image_picker\|ImagePicker" lib/main.dart; then
+          if grep -qi "image_picker" lib/main.dart; then
             REQUIRED_PERMS+=("android.permission.READ_MEDIA_IMAGES")
             REQUIRED_PERMS+=("android.permission.READ_EXTERNAL_STORAGE")
           fi
@@ -119,20 +134,13 @@ jobs:
             REQUIRED_PERMS+=("android.permission.READ_MEDIA_IMAGES")
             REQUIRED_PERMS+=("android.permission.WRITE_EXTERNAL_STORAGE")
           fi
-          if grep -qi "location\|geolocator\|Location" lib/main.dart; then
+          if grep -qi "location\|geolocator" lib/main.dart; then
             REQUIRED_PERMS+=("android.permission.ACCESS_FINE_LOCATION")
             REQUIRED_PERMS+=("android.permission.ACCESS_COARSE_LOCATION")
           fi
-          if grep -qi "audio\|record\|AudioRecorder" lib/main.dart; then
+          if grep -qi "audio\|record" lib/main.dart; then
             REQUIRED_PERMS+=("android.permission.RECORD_AUDIO")
           fi
-          if grep -qi "permission_handler" lib/main.dart; then
-            REQUIRED_PERMS+=("android.permission.CAMERA")
-            REQUIRED_PERMS+=("android.permission.READ_MEDIA_IMAGES")
-            REQUIRED_PERMS+=("android.permission.RECORD_AUDIO")
-            REQUIRED_PERMS+=("android.permission.ACCESS_FINE_LOCATION")
-          fi
-
           for perm in "${REQUIRED_PERMS[@]}"; do
             if ! grep -q "<uses-permission android:name=\"$perm\"" android/app/src/main/AndroidManifest.xml; then
               sed -i "s|</manifest>|    <uses-permission android:name=\"$perm\" />\n</manifest>|" android/app/src/main/AndroidManifest.xml
