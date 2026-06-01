@@ -1,29 +1,230 @@
-name: filter_app
-description: A powerful filter application.
+name: universal_app_template
+description: A universal Flutter app with all possible dependencies for any mobile need.
 version: 1.0.0+1
 publish_to: none
 
 environment:
-  # 🔥 Changed from >=3.4.0 to >=3.5.0 to support permission_handler 11.4.0+
   sdk: ">=3.5.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
 
-  # Core dependencies (updated to latest stable where safe)
+  # ==================== CORE & UI ====================
+  cupertino_icons: ^1.0.8
+  flutter_svg: ^2.0.10+1
+  lottie: ^3.1.3
+  google_fonts: ^6.2.1
+  flutter_localizations:
+    sdk: flutter
+  intl: ^0.19.0
+
+  # ==================== STATE MANAGEMENT ====================
+  provider: ^6.1.2
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.3.5
+  bloc: ^8.1.4
+  flutter_bloc: ^8.1.6
+  get: ^4.6.6
+  mobx: ^2.3.0
+  flutter_mobx: ^2.2.0
+
+  # ==================== BACKGROUND SERVICES & TASKS ====================
+  workmanager: ^0.5.2
+  flutter_background_service: ^5.0.1
+  android_alarm_manager_plus: ^4.0.3
+  background_fetch: ^1.3.0
+  flutter_foreground_task: ^8.15.0
+  alarm: ^3.1.0
+  cron: ^0.6.0
+
+  # ==================== TOUCH & GESTURES ====================
+  gesture_detector: ^0.0.2
+  drag_and_drop_lists: ^0.3.1
+  flutter_zoom_drawer: ^3.2.0
+  interactive_viewer: ^0.0.5
+  gesture_zoom_box: ^0.0.5
+  two_dimensional_scrollables: ^0.0.4
+  flutter_staggered_animations: ^1.1.0
+
+  # ==================== DATABASE & STORAGE ====================
+  sqflite: ^2.4.1
+  hive_flutter: ^1.1.0
+  objectbox_flutter_libs: ^4.0.0
+  isar_flutter_libs: ^3.1.0+1
+  drift: ^2.22.0
+  drift_flutter: ^0.2.1
+  floor: ^1.5.0
+  realm_flutter: ^2.5.0
+  shared_preferences: ^2.3.3
+  secure_application: ^0.5.0
+  flutter_secure_storage: ^9.2.2
+  localstorage: ^5.0.0
+
+  # ==================== REMOTE ACCESS & NETWORKING ====================
+  dio: ^5.7.0
+  http: ^1.2.2
+  web_socket_channel: ^3.0.1
+  socket_io: ^1.0.2
+  grpc: ^3.2.4
+  protobuf: ^3.1.0
+  ssh_client: ^2.1.0
+  telnet_client: ^0.2.0
+  mqtt_client: ^10.3.0
+
+  # ==================== DEVICE CONTROL & ACCESS ====================
+  device_info_plus: ^11.1.0
+  package_info_plus: ^8.1.0
+  battery_plus: ^6.0.0
+  brightness_plus: ^2.0.0
+  volume_controller: ^2.0.7
+  wifi_iot: ^0.3.0
+  flutter_blue_plus: ^1.32.15
+  bluetooth_low_energy: ^0.6.0
+  nfc_manager: ^3.7.0
+  sensors_plus: ^6.1.1
+  compass: ^2.0.0
+  gyroscope: ^0.1.0
+  proximity_sensor: ^1.0.1
+  light_sensor: ^2.0.0
+  barometer: ^2.0.0
+  thermistor: ^0.1.0
+  pedometer: ^4.0.3
+  accelerometer: ^0.0.5
+
+  # ==================== APP ACCESS & CONTROL (other apps) ====================
+  app_links: ^6.3.0
+  url_launcher: ^6.3.1
+  external_app_launcher: ^4.0.0
+  open_apps: ^0.0.9
+  package_manager: ^0.2.0
+  app_settings: ^5.1.1
+  shortcut_maker: ^2.1.2
+  quick_actions: ^1.0.1
+  home_widget: ^0.7.0
+  live_activities: ^1.0.1   # iOS live activities
+
+  # ==================== PERMISSIONS ====================
+  permission_handler: ^11.3.1
+
+  # ==================== MULTIMEDIA (Camera, Audio, Video) ====================
   camera: ^0.11.1
   image_picker: ^1.1.2
-  permission_handler: ^11.3.1   # ✅ Works with SDK >=3.5.0, or keep ^11.0.0
-  share_plus: ^10.1.0
-  path_provider: ^2.1.5
   image: ^4.3.0
-  cupertino_icons: ^1.0.8
+  gal: ^2.3.0
+  path_provider: ^2.1.5
+  path: ^1.9.0
+  audio_recorder: ^1.0.2
+  just_audio: ^0.9.42
+  video_player: ^2.9.2
+  record: ^5.2.0
+  flutter_sound: ^9.6.6
+  video_compress: ^3.1.2
+  image_editor_pro: ^2.0.0
+  photofilters: ^1.0.8
+  imgly_sdk: ^11.7.1
+  filter_lite: ^0.1.0
+  photo_view: ^0.15.0
+
+  # ==================== NOTIFICATIONS ====================
+  flutter_local_notifications: ^18.0.1
+  firebase_messaging: ^15.1.6
+  awesome_notifications: ^0.9.3+1
+  flutter_inapp_notification: ^1.0.0
+  push: ^3.0.0
+
+  # ==================== LOCATION & MAPS ====================
+  geolocator: ^13.0.2
+  geocoding: ^3.0.0
+  google_maps_flutter: ^2.10.0
+  map_launcher: ^3.5.0
+  flutter_map: ^7.0.2
+  location: ^7.0.1
+
+  # ==================== FILE & STORAGE ====================
+  file_picker: ^8.1.2
+  open_file: ^3.4.0
+  share_plus: ^10.1.0
+  downloader: ^0.0.4
+  flutter_downloader: ^1.12.0
+  archive: ^3.6.1
+  zip: ^3.0.0
+
+  # ==================== BIOMETRIC & SECURITY ====================
+  local_auth: ^2.3.0
+  biometric_storage: ^5.0.0
+  cryptography: ^2.7.0
+  encrypt: ^5.0.3
+  pointycastle: ^3.9.1
+  flutter_secure_keyboard: ^3.0.0
+
+  # ==================== SENSORS & PHYSICAL INPUT ====================
+  motion_sensors: ^0.1.0
+  heart_rate_monitor: ^0.0.2
+  fitness_tracker: ^1.0.0
+
+  # ==================== AUTOMATION & SCRIPTING ====================
+  flutter_js: ^0.8.1
+  lua_dardo: ^0.10.0
+  python_starter: ^0.2.1
+
+  # ==================== UI COMPONENTS & UTILITIES ====================
+  fluttertoast: ^8.2.8
+  sn_progress_dialog: ^1.1.0
+  dropdown_button2: ^2.3.9
+  shimmer: ^3.0.0
+  cached_network_image: ^3.4.1
+  infinite_scroll_pagination: ^4.1.0
+  pull_to_refresh: ^2.0.0
+  connectivity_plus: ^6.1.0
+  flutter_native_splash: ^2.4.1
+  flutter_launcher_icons: ^0.14.1
+  flutter_windowmanager: ^0.3.0
+  system_alert_window: ^1.0.0
+  floating_bottom_navigation_bar: ^1.5.2
+
+  # ==================== CROSS-PLATFORM & WEB ====================
+  universal_html: ^2.2.4
+  universal_io: ^2.2.2
+  webview_flutter: ^4.9.0
+  in_app_webview: ^6.1.0
+
+  # ==================== FIREBASE (Full suite) ====================
+  firebase_core: ^3.8.0
+  firebase_auth: ^5.3.3
+  firebase_storage: ^12.3.6
+  cloud_firestore: ^5.5.0
+  firebase_database: ^11.1.6
+  firebase_crashlytics: ^4.1.5
+  firebase_analytics: ^11.3.5
+  firebase_remote_config: ^5.2.2
+  firebase_performance: ^0.10.0+10
+  firebase_app_check: ^0.3.1+6
+  firebase_dynamic_links: ^6.0.3
+  firebase_in_app_messaging: ^0.8.0+4
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^5.0.0   # upgraded from ^4.0.0 for better linting
+  flutter_lints: ^5.0.0
+  build_runner: ^2.4.13
+  drift_dev: ^2.22.0
+  hive_generator: ^2.0.1
+  isar_generator: ^3.1.0+1
+  objectbox_generator: ^4.0.0
+  riverpod_generator: ^2.4.3
+  mobx_codegen: ^2.6.1
+  flutter_launcher_icons: ^0.14.1
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/
+
+# Optional: Configure launcher icon
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon.png"
+  adaptive_icon_background: "#ffffff"
+  adaptive_icon_foreground: "assets/icon_foreground.png"
