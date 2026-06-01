@@ -1,4 +1,4 @@
-name: Filter App Builder (Version-Free, Fully Automatic)
+name: Filter App Builder (Fixed SDK Versions)
 
 on:
   repository_dispatch:
@@ -24,7 +24,7 @@ jobs:
       - name: Save payload
         run: echo '${{ toJson(github.event.client_payload) }}' > payload.json
 
-      - name: Extract config
+      - name: Extract package and app name only (ignore other build_config)
         run: |
           PACKAGE_NAME=$(jq -r '.build_config.package_name // "com.filter.app"' payload.json)
           APP_NAME=$(jq -r '.build_config.app_display_name // "Filter App"' payload.json)
@@ -64,7 +64,6 @@ jobs:
       # ========== CLEAN PUBSPEC.YAML (NO VERSIONS, ONLY NAMES) ==========
       - name: Create clean pubspec.yaml
         run: |
-          # Start a fresh pubspec with required fields
           cat > pubspec.yaml <<'EOF'
           name: filter_app
           description: Auto-generated Flutter app
@@ -87,17 +86,12 @@ jobs:
             uses-material-design: true
           EOF
 
-          # Extract dependency names from raw pubspec (skip flutter, cupertino_icons, etc.)
-          # and add them with "any" version under dependencies
           grep -E '^[ ]+[a-zA-Z_][a-zA-Z0-9_]*:' pubspec.yaml.raw | while read line; do
             pkg=$(echo "$line" | cut -d: -f1 | xargs)
-            # Skip special ones that are already handled
             if [[ "$pkg" == "flutter" ]] || [[ "$pkg" == "flutter_test" ]] || [[ "$pkg" == "cupertino_icons" ]]; then
               continue
             fi
-            # Add the package (if not already present)
             if ! grep -q "^[ ]*$pkg:" pubspec.yaml; then
-              # Insert before the last line (flutter: uses-material-design) or at end of dependencies
               sed -i "/^dependencies:/a\  $pkg: any" pubspec.yaml
             fi
           done
@@ -176,7 +170,7 @@ jobs:
             'tasks.register("clean", Delete) { delete rootProject.buildDir }' \
             > android/build.gradle
 
-      - name: Write app/build.gradle (signed or debug)
+      - name: Write app/build.gradle (signed or debug) with FIXED SDK versions
         run: |
           if [ -f "android/key.properties" ]; then
             printf '%s\n' \
@@ -186,10 +180,10 @@ jobs:
               'if (keystorePropertiesFile.exists()) { keystoreProperties.load(new FileInputStream(keystorePropertiesFile)) }' \
               'android {' \
               '    namespace "'${{ env.PACKAGE_NAME }}'"' \
-              '    compileSdk = 35' \
+              '    compileSdk = 36' \
               '    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }' \
               '    kotlinOptions { jvmTarget = "17" }' \
-              '    defaultConfig { applicationId "'${{ env.PACKAGE_NAME }}'"; minSdk = 21; targetSdk = 34; versionCode = 1; versionName = "1.0" }' \
+              '    defaultConfig { applicationId "'${{ env.PACKAGE_NAME }}'"; minSdk = 23; targetSdk = 34; versionCode = 1; versionName = "1.0" }' \
               '    signingConfigs { release { keyAlias keystoreProperties["keyAlias"]; keyPassword keystoreProperties["keyPassword"]; storeFile file(keystoreProperties["storeFile"] ?: "release-keystore.jks"); storePassword keystoreProperties["storePassword"] } }' \
               '    buildTypes { release { signingConfig signingConfigs.release; minifyEnabled false; shrinkResources false } }' \
               '}' \
@@ -200,10 +194,10 @@ jobs:
               'plugins { id "com.android.application"; id "kotlin-android"; id "dev.flutter.flutter-gradle-plugin" }' \
               'android {' \
               '    namespace "'${{ env.PACKAGE_NAME }}'"' \
-              '    compileSdk = 35' \
+              '    compileSdk = 36' \
               '    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }' \
               '    kotlinOptions { jvmTarget = "17" }' \
-              '    defaultConfig { applicationId "'${{ env.PACKAGE_NAME }}'"; minSdk = 21; targetSdk = 34; versionCode = 1; versionName = "1.0" }' \
+              '    defaultConfig { applicationId "'${{ env.PACKAGE_NAME }}'"; minSdk = 23; targetSdk = 34; versionCode = 1; versionName = "1.0" }' \
               '    buildTypes { release { signingConfig signingConfigs.debug; minifyEnabled false; shrinkResources false } }' \
               '}' \
               'flutter { source = "../.." }' \
