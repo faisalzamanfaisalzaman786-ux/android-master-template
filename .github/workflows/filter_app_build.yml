@@ -58,7 +58,6 @@ jobs:
         run: |
           PUBSPEC_B64=$(jq -r '.source_files.pubspec_yaml // ""' payload.json)
           if [ -n "$PUBSPEC_B64" ] && [ "$PUBSPEC_B64" != "null" ]; then
-            echo "📦 Writing pubspec.yaml from UI payload"
             echo "$PUBSPEC_B64" | base64 -d > pubspec.yaml
           fi
 
@@ -68,23 +67,29 @@ jobs:
       - name: Create assets folder
         run: mkdir -p assets
 
-      # ========== START: RELEASE SIGNING SETUP ==========
+      # ========== RELEASE SIGNING SETUP (no if on step, but inside bash) ==========
       - name: Decode Keystore
-        if: secrets.SIGNING_KEYSTORE_BASE64 != ''
         run: |
-          echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 -d > android/app/release-keystore.jks
+          if [ -n "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 -d > android/app/release-keystore.jks
+          else
+            echo "⚠️ No SIGNING_KEYSTORE_BASE64 secret found – will use debug signing"
+          fi
 
       - name: Create key.properties
-        if: secrets.SIGNING_KEYSTORE_BASE64 != ''
         run: |
-          cat > android/key.properties <<EOF
+          if [ -f "android/app/release-keystore.jks" ]; then
+            cat > android/key.properties <<EOF
           storePassword=${{ secrets.SIGNING_STORE_PASSWORD }}
           keyPassword=${{ secrets.SIGNING_KEY_PASSWORD }}
           keyAlias=${{ secrets.SIGNING_KEY_ALIAS }}
           storeFile=release-keystore.jks
           EOF
+          else
+            echo "No keystore found, skipping key.properties"
+          fi
 
-      - name: Generate build.gradle with signing config
+      - name: Generate build.gradle with conditional signing
         run: |
           cat > android/build.gradle <<'EOF'
           buildscript {
@@ -116,9 +121,8 @@ jobs:
           }
           EOF
 
-          # Create app/build.gradle with conditional signing
+          # If key.properties exists, use signed config; otherwise debug signing
           if [ -f "android/key.properties" ]; then
-            # Signed release build
             cat > android/app/build.gradle <<'EOF'
             plugins {
                 id "com.android.application"
@@ -168,7 +172,6 @@ jobs:
             }
             EOF
           else
-            # Unsigned debug signing (fallback)
             cat > android/app/build.gradle <<EOF
             plugins {
                 id "com.android.application"
@@ -231,14 +234,12 @@ jobs:
             done
           fi
 
-      # ========== BUILD APK AND AAB ==========
-      - name: Build release APK (signed)
+      - name: Build release APK
         run: flutter build apk --release
 
-      - name: Build release AAB (Android App Bundle)
+      - name: Build release AAB
         run: flutter build appbundle --release
 
-      # ========== UPLOAD ARTIFACTS ==========
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
