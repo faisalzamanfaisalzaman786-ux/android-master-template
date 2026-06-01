@@ -1,4 +1,4 @@
-name: Filter App Builder (Auto-Fix Everything)
+name: Filter App Builder (Auto-Fix Everything - Robust)
 
 on:
   repository_dispatch:
@@ -24,7 +24,6 @@ jobs:
       - name: Save payload
         run: echo '${{ toJson(github.event.client_payload) }}' > payload.json
 
-      # ---------- Extract config ----------
       - name: Extract config
         run: |
           PACKAGE_NAME=$(jq -r '.build_config.package_name // "com.filter.app"' payload.json)
@@ -32,7 +31,6 @@ jobs:
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
           echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
 
-      # ---------- Create fresh Flutter project ----------
       - name: Create fresh Flutter project
         run: |
           PKG="${{ env.PACKAGE_NAME }}"
@@ -41,14 +39,12 @@ jobs:
           rm -rf android ios .dart_tool build
           flutter create --org "$ORG" --project-name "$PROJ" --platforms=android .
 
-      # ---------- Write main.dart ----------
       - name: Write main.dart
         run: |
           MAIN_B64=$(jq -r '.source_files.main_dart // ""' payload.json)
           [ -z "$MAIN_B64" ] || [ "$MAIN_B64" = "null" ] && echo "❌ No main.dart" && exit 1
           echo "$MAIN_B64" | base64 -d > lib/main.dart
 
-      # ---------- Write raw AndroidManifest ----------
       - name: Write raw AndroidManifest.xml
         run: |
           MANIFEST_B64=$(jq -r '.source_files.android_manifest // ""' payload.json)
@@ -56,7 +52,6 @@ jobs:
           mkdir -p android/app/src/main
           echo "$MANIFEST_B64" | base64 -d > android/app/src/main/AndroidManifest.xml.raw
 
-      # ---------- Write raw pubspec.yaml ----------
       - name: Write raw pubspec.yaml
         run: |
           PUBSPEC_B64=$(jq -r '.source_files.pubspec_yaml // ""' payload.json)
@@ -66,39 +61,28 @@ jobs:
             echo "❌ No pubspec.yaml in payload" && exit 1
           fi
 
-      # ============================================================
-      # 1. AUTO-FIX PUBSPEC.YAML (versions + SDK constraint)
-      # ============================================================
+      # ========== 1. AUTO-FIX PUBSPEC.YAML (ROBUST) ==========
       - name: Auto-fix pubspec.yaml
         run: |
-          echo "🔧 Fixing pubspec.yaml..."
+          echo "🔧 Fixing pubspec.yaml (robust)..."
           cp pubspec.yaml.raw pubspec.yaml
 
-          # Fix environment.sdk if missing or invalid
+          # First, remove any existing environment.sdk line completely (if malformed)
+          sed -i '/^[[:space:]]*sdk:/d' pubspec.yaml
+
+          # Ensure environment section exists
           if ! grep -q "^environment:" pubspec.yaml; then
             echo -e "\nenvironment:\n  sdk: \">=3.5.0 <4.0.0\"" >> pubspec.yaml
           else
-            # Check if sdk line exists and is valid
-            if grep -q "^[[:space:]]*sdk:" pubspec.yaml; then
-              current_sdk=$(grep "^[[:space:]]*sdk:" pubspec.yaml | head -1 | sed 's/.*sdk: //' | tr -d '"' | tr -d "'")
-              if [[ ! "$current_sdk" =~ ^">=.*<.*"$ ]] && [[ ! "$current_sdk" =~ ^[0-9] ]]; then
-                # Invalid SDK constraint - replace it
-                sed -i "s/^[[:space:]]*sdk:.*/  sdk: \">=3.5.0 <4.0.0\"/" pubspec.yaml
-                echo "✅ Fixed invalid SDK constraint"
-              else
-                echo "✅ SDK constraint seems fine: $current_sdk"
-              fi
-            else
-              # No sdk line under environment - add it
+            # Add proper sdk line under environment (if not already present after deletion)
+            if ! grep -q "^[[:space:]]*sdk:" pubspec.yaml; then
               sed -i "/^environment:/a\  sdk: \">=3.5.0 <4.0.0\"" pubspec.yaml
-              echo "✅ Added missing sdk constraint"
             fi
           fi
 
-          # Fix each dependency version
+          # Fix dependencies
           grep -E '^[ ]+[a-zA-Z_][a-zA-Z0-9_]*:' pubspec.yaml | while read line; do
             pkg=$(echo "$line" | cut -d: -f1 | xargs)
-            # Skip Flutter internal packages
             if [[ "$pkg" == "flutter" ]] || [[ "$pkg" == "flutter_test" ]] || [[ "$pkg" == "cupertino_icons" ]] || [[ "$pkg" == *"_sdk"* ]]; then
               continue
             fi
@@ -108,27 +92,22 @@ jobs:
               sed -i "s/^[ ]*$pkg:.*/  $pkg: ^$latest/" pubspec.yaml
               echo "✅ Updated $pkg to ^$latest"
             else
-              echo "⚠️ Package $pkg not found on pub.dev – keeping as is"
+              echo "⚠️ Package $pkg not found – keeping as is"
             fi
           done
 
           echo "✅ pubspec.yaml is ready"
 
-      # ============================================================
-      # 2. AUTO-FIX ANDROID PERMISSIONS (add missing ones)
-      # ============================================================
+      # ========== 2. AUTO-FIX ANDROID PERMISSIONS ==========
       - name: Auto-fix Android permissions
         run: |
           echo "🔧 Adding missing permissions..."
           cp android/app/src/main/AndroidManifest.xml.raw android/app/src/main/AndroidManifest.xml
 
-          # Base required permissions
           REQUIRED_PERMS=(
             "android.permission.INTERNET"
             "android.permission.ACCESS_NETWORK_STATE"
           )
-
-          # Scan main.dart for features
           if grep -qi "camera\|Camera" lib/main.dart; then
             REQUIRED_PERMS+=("android.permission.CAMERA")
           fi
@@ -154,24 +133,20 @@ jobs:
             REQUIRED_PERMS+=("android.permission.ACCESS_FINE_LOCATION")
           fi
 
-          # Add each missing permission
           for perm in "${REQUIRED_PERMS[@]}"; do
             if ! grep -q "<uses-permission android:name=\"$perm\"" android/app/src/main/AndroidManifest.xml; then
               sed -i "s|</manifest>|    <uses-permission android:name=\"$perm\" />\n</manifest>|" android/app/src/main/AndroidManifest.xml
-              echo "➕ Added missing permission: $perm"
+              echo "➕ Added $perm"
             fi
           done
 
-          echo "✅ AndroidManifest.xml is ready"
-
-      # ---------- Get dependencies ----------
       - name: Get dependencies
         run: flutter pub get
 
       - name: Create assets folder
         run: mkdir -p assets
 
-      # ========== RELEASE SIGNING (if secrets exist) ==========
+      # ========== RELEASE SIGNING (optional) ==========
       - name: Decode Keystore
         run: |
           if [ -n "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" ]; then
