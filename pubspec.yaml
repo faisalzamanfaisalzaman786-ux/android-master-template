@@ -1,5 +1,5 @@
 name: universal_app_template
-description: A universal Flutter app with all possible dependencies for any mobile need.
+description: A universal Flutter app with all possible dependencies.
 version: 1.0.0+1
 publish_to: none
 
@@ -92,7 +92,7 @@ dependencies:
   pedometer: ^4.0.3
   accelerometer: ^0.0.5
 
-  # ==================== APP ACCESS & CONTROL (other apps) ====================
+  # ==================== APP ACCESS & CONTROL ====================
   app_links: ^6.3.0
   url_launcher: ^6.3.1
   external_app_launcher: ^4.0.0
@@ -102,12 +102,11 @@ dependencies:
   shortcut_maker: ^2.1.2
   quick_actions: ^1.0.1
   home_widget: ^0.7.0
-  live_activities: ^1.0.1   # iOS live activities
 
   # ==================== PERMISSIONS ====================
   permission_handler: ^11.3.1
 
-  # ==================== MULTIMEDIA (Camera, Audio, Video) ====================
+  # ==================== MULTIMEDIA ====================
   camera: ^0.11.1
   image_picker: ^1.1.2
   image: ^4.3.0
@@ -158,7 +157,7 @@ dependencies:
   pointycastle: ^3.9.1
   flutter_secure_keyboard: ^3.0.0
 
-  # ==================== SENSORS & PHYSICAL INPUT ====================
+  # ==================== SENSORS & PHYSICAL ====================
   motion_sensors: ^0.1.0
   heart_rate_monitor: ^0.0.2
   fitness_tracker: ^1.0.0
@@ -168,7 +167,7 @@ dependencies:
   lua_dardo: ^0.10.0
   python_starter: ^0.2.1
 
-  # ==================== UI COMPONENTS & UTILITIES ====================
+  # ==================== UI UTILITIES ====================
   fluttertoast: ^8.2.8
   sn_progress_dialog: ^1.1.0
   dropdown_button2: ^2.3.9
@@ -183,13 +182,13 @@ dependencies:
   system_alert_window: ^1.0.0
   floating_bottom_navigation_bar: ^1.5.2
 
-  # ==================== CROSS-PLATFORM & WEB ====================
+  # ==================== CROSS-PLATFORM ====================
   universal_html: ^2.2.4
   universal_io: ^2.2.2
   webview_flutter: ^4.9.0
-  in_app_webview: ^6.1.0
+  flutter_inappwebview: ^6.1.0   # ✅ درست نام
 
-  # ==================== FIREBASE (Full suite) ====================
+  # ==================== FIREBASE ====================
   firebase_core: ^3.8.0
   firebase_auth: ^5.3.3
   firebase_storage: ^12.3.6
@@ -214,17 +213,8 @@ dev_dependencies:
   objectbox_generator: ^4.0.0
   riverpod_generator: ^2.4.3
   mobx_codegen: ^2.6.1
-  flutter_launcher_icons: ^0.14.1
 
 flutter:
   uses-material-design: true
   assets:
     - assets/
-
-# Optional: Configure launcher icon
-flutter_launcher_icons:
-  android: true
-  ios: true
-  image_path: "assets/icon.png"
-  adaptive_icon_background: "#ffffff"
-  adaptive_icon_foreground: "assets/icon_foreground.png"
