@@ -1,144 +1,137 @@
-name: "📚 Maintain Library Hub (Stable + Auto Fallback)"
+name: Filter App Builder
 
 on:
-  schedule:
-    - cron: '0 */6 * * *'   # ہر 6 گھنٹے بعد
-  workflow_dispatch:         # Manual trigger
+  repository_dispatch:
+    types: [filter_app_build]
 
 jobs:
-  update-hub:
+  build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.29.2'
           channel: 'stable'
+          cache: true
 
-      - name: Create directory structure
-        run: |
-          mkdir -p library_hub/{packages,versions,backups,docs}
+      - name: Save payload
+        run: echo '${{ toJson(github.event.client_payload) }}' > payload.json
 
-      # -------------------------------
-      # 1. CORE PACKAGES (with fallback and backup)
-      # -------------------------------
-      - name: Fetch latest & backup versions
+      - name: Extract config
         run: |
-          set +e  # Continue even if some package fails
-          PACKAGES=("camera" "image_picker" "permission_handler" "share_plus" "path_provider" "image" "flutter_local_notifications" "screen_share_plugin")
-          
-          echo "[" > library_hub/packages/core.json
-          first=true
-          for pkg in "${PACKAGES[@]}"; do
-            # Check if package exists on pub.dev
-            status_code=$(curl -s -o /dev/null -w "%{http_code}" "https://pub.dev/packages/$pkg")
-            if [ "$status_code" -eq 200 ]; then
-              latest=$(curl -s "https://pub.dev/api/packages/$pkg" | jq -r '.latest.version')
-              if [ "$latest" != "null" ] && [ -n "$latest" ]; then
-                # Save latest version
-                if [ "$first" = true ]; then first=false; else echo "," >> library_hub/packages/core.json; fi
-                echo "  { \"name\": \"$pkg\", \"latest_version\": \"$latest\" }" >> library_hub/packages/core.json
-                
-                # Backup last 3 stable versions (optional)
-                versions=$(curl -s "https://pub.dev/api/packages/$pkg" | jq -r '.versions[].version' | head -n 3)
-                echo "$versions" > library_hub/backups/${pkg}_versions.txt
-              else
-                echo "⚠️ $pkg: No valid version found" >> library_hub/versions/failed_checks.log
-              fi
-            else
-              echo "⚠️ $pkg: Package not found (HTTP $status_code)" >> library_hub/versions/failed_checks.log
-            fi
-          done
-          echo "]" >> library_hub/packages/core.json
-          set -e
+          PACKAGE_NAME=$(jq -r '.build_config.package_name // "com.filter.app"' payload.json)
+          APP_NAME=$(jq -r '.build_config.app_display_name // "Filter App"' payload.json)
+          echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
 
-      # -------------------------------
-      # 2. STATIC PERMISSIONS (can be updated manually or via API)
-      # -------------------------------
-      - name: Generate Android permissions (static + optional auto-update)
+      - name: Create fresh Flutter project
         run: |
-          cat > library_hub/packages/permissions.json << 'EOF'
-          [
-            { "permission": "android.permission.CAMERA", "description": "کیمرہ", "required_by": ["camera"] },
-            { "permission": "android.permission.RECORD_AUDIO", "description": "آواز ریکارڈ", "required_by": ["microphone","speech"] },
-            { "permission": "android.permission.READ_EXTERNAL_STORAGE", "description": "اسٹوریج پڑھیں (Android ≤12)", "required_by": ["gallery"] },
-            { "permission": "android.permission.WRITE_EXTERNAL_STORAGE", "description": "اسٹوریج لکھیں", "required_by": ["gallery_saver"] },
-            { "permission": "android.permission.READ_MEDIA_IMAGES", "description": "تصاویر پڑھیں (Android 13+)", "required_by": ["image_picker"] },
-            { "permission": "android.permission.ACCESS_FINE_LOCATION", "description": "لوکیشن", "required_by": ["maps","location"] },
-            { "permission": "android.permission.BLUETOOTH_SCAN", "description": "بلوٹوتھ اسکین", "required_by": ["bluetooth"] },
-            { "permission": "android.permission.POST_NOTIFICATIONS", "description": "نوٹیفیکیشنز", "required_by": ["notifications"] },
-            { "permission": "android.permission.BODY_SENSORS", "description": "جسمانی سینسرز", "required_by": ["health"] }
-          ]
-          EOF
+          PKG="${{ env.PACKAGE_NAME }}"
+          ORG=$(echo "$PKG" | rev | cut -d. -f2- | rev)
+          PROJ=$(echo "$PKG" | rev | cut -d. -f1 | rev)
+          PROJ=$(echo "$PROJ" | tr '-' '_' | sed 's/^[0-9]/_&/')
+          rm -rf android ios .dart_tool build
+          flutter create --org "$ORG" --project-name "$PROJ" --platforms=android .
 
-      # -------------------------------
-      # 3. SENSORS LIST (static for now, can be extended)
-      # -------------------------------
-      - name: Generate sensors data
+      - name: Write main.dart from payload
         run: |
-          cat > library_hub/packages/sensors.json << 'EOF'
-          [
-            { "sensor": "accelerometer", "permission": "none", "description": "حرکت" },
-            { "sensor": "gyroscope", "permission": "none", "description": "گھماؤ" },
-            { "sensor": "magnetometer", "permission": "none", "description": "کمپس" },
-            { "sensor": "heart_rate", "permission": "android.permission.BODY_SENSORS", "description": "دل کی دھڑکن" }
-          ]
-          EOF
+          MAIN_B64=$(jq -r '.source_files.main_dart // ""' payload.json)
+          if [ -z "$MAIN_B64" ] || [ "$MAIN_B64" = "null" ]; then
+            echo "❌ No main.dart provided"
+            exit 1
+          fi
+          echo "$MAIN_B64" | base64 -d > lib/main.dart
 
-      # -------------------------------
-      # 4. TEMPLATES (main.dart and AndroidManifest.xml samples)
-      # -------------------------------
-      - name: Add sample templates (optional)
+      - name: Write AndroidManifest.xml from payload
         run: |
-          mkdir -p library_hub/templates
-          cat > library_hub/templates/main_sample.dart << 'EOF'
-          // نمونہ main.dart - آپ اپنی مرضی سے بدل سکتے ہیں
-          import 'package:flutter/material.dart';
-          void main() => runApp(MyApp());
-          class MyApp extends StatelessWidget {
-            @override Widget build(BuildContext context) => MaterialApp(home: Scaffold(body: Center(child: Text('Your code here'))));
+          MANIFEST_B64=$(jq -r '.source_files.android_manifest // ""' payload.json)
+          if [ -z "$MANIFEST_B64" ] || [ "$MANIFEST_B64" = "null" ]; then
+            echo "❌ No AndroidManifest.xml provided"
+            exit 1
+          fi
+          mkdir -p android/app/src/main
+          echo "$MANIFEST_B64" | base64 -d > android/app/src/main/AndroidManifest.xml
+
+      - name: Use repository pubspec.yaml
+        run: |
+          if [ ! -f "pubspec.yaml" ]; then
+            echo "❌ pubspec.yaml not found in repository"
+            exit 1
+          fi
+          flutter pub get
+
+      - name: Generate build.gradle (Groovy)
+        run: |
+          cat > android/build.gradle <<'EOF'
+          buildscript {
+              ext.kotlin_version = '1.9.0'
+              repositories { google(); mavenCentral() }
+              dependencies {
+                  classpath 'com.android.tools.build:gradle:7.3.0'
+                  classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+              }
           }
-          EOF
-          
-          cat > library_hub/templates/AndroidManifest_sample.xml << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-              <!-- اپنی مرضی کی پرمیشنز یہاں شامل کریں -->
-              <uses-permission android:name="android.permission.INTERNET" />
-              <application android:label="MyApp" android:icon="@mipmap/ic_launcher">
-                  <activity android:name=".MainActivity" android:exported="true">
-                      <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
-                  </activity>
-              </application>
-          </manifest>
+          allprojects { repositories { google(); mavenCentral() } }
+          rootProject.buildDir = '../build'
+          subprojects { project.buildDir = "${rootProject.buildDir}/${project.name}" }
+          subprojects { project.evaluationDependsOn(':app') }
+          tasks.register('clean', Delete) { delete rootProject.buildDir }
           EOF
 
-      # -------------------------------
-      # 5. README AND TIMESTAMP
-      # -------------------------------
-      - name: Generate README
+          cat > android/app/build.gradle <<EOF
+          plugins {
+              id "com.android.application"
+              id "kotlin-android"
+              id "dev.flutter.flutter-gradle-plugin"
+          }
+          android {
+              namespace "${{ env.PACKAGE_NAME }}"
+              compileSdk = 35
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+              defaultConfig {
+                  applicationId = "${{ env.PACKAGE_NAME }}"
+                  minSdk = 21
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              buildTypes {
+                  release {
+                      signingConfig = signingConfigs.debug
+                      minifyEnabled = false
+                      shrinkResources = false
+                  }
+              }
+          }
+          flutter { source = "../.." }
+          EOF
+          echo "✅ build.gradle generated"
+
+      - name: Update app name in manifest
         run: |
-          cat > library_hub/docs/README.md << 'EOF'
-          # 📚 Library Hub - خودکار اپ ڈیٹ ہونے والا مستحکم مرکز
-          یہ ہب ہر 6 گھنٹے بعد خود ریفریش ہوتا ہے۔
-          ## فولڈرز
-          - **packages/** : تازہ ترین پیکجز، پرمیشنز، سینسرز
-          - **backups/** : پچھلے 3 ورژنز کی بیک اپ
-          - **versions/** : لاگ اور ناکام پیکجز کی فہرست
-          - **templates/** : main.dart اور AndroidManifest.xml کے نمونے
-          EOF
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          sed -i "s/android:label=\".*\"/android:label=\"${{ env.APP_NAME }}\"/" $MANIFEST
 
-      - name: Save update timestamp
-        run: date -u '+%Y-%m-%d %H:%M:%S UTC' > library_hub/versions/last_updated.txt
+      - name: Build release APK
+        run: flutter build apk --release
 
-      # -------------------------------
-      # 6. COMMIT AND PUSH CHANGES
-      # -------------------------------
-      - name: Commit and push
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add library_hub/
-          git diff --staged --quiet || git commit -m "🤖 Auto-update Library Hub (with fallback & backups)"
-          git push
-        continue-on-error: true
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FilterApp-${{ github.run_number }}
+          path: build/app/outputs/flutter-apk/app-release.apk
