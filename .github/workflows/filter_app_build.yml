@@ -1,4 +1,4 @@
-name: Filter App Builder (Python Auto-Fix)
+name: Filter App Builder (Flutter 3.32.0 + Auto-Fix)
 
 on:
   repository_dispatch:
@@ -17,7 +17,7 @@ jobs:
           java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.29.2'
+          flutter-version: '3.32.0'   # ✅ Dart 3.10.0, supports latest packages
           channel: 'stable'
           cache: true
 
@@ -61,35 +61,32 @@ jobs:
             echo "❌ No pubspec.yaml in payload" && exit 1
           fi
 
-      # ========== PYTHON SCRIPT TO FIX PUBSPEC.YAML ROBUSTLY ==========
+      # ========== AUTO-FIX PUBSPEC.YAML (Python) ==========
       - name: Auto-fix pubspec.yaml with Python
         run: |
           python3 << 'PYTHON_FIX'
-          import re, yaml, sys
+          import re, yaml, sys, subprocess, json
           with open('pubspec.yaml.raw', 'r') as f:
               content = f.read()
           try:
               data = yaml.safe_load(content)
           except:
-              # If YAML is malformed, we'll still try to fix environment section
               data = {}
-              print("⚠️ YAML parsing error, will regenerate environment section")
+              print("⚠️ YAML parsing error, will regenerate")
 
-          # Ensure environment section with correct sdk constraint
+          # Fix environment SDK constraint
           if 'environment' not in data or not isinstance(data['environment'], dict):
               data['environment'] = {}
-          data['environment']['sdk'] = '>=3.5.0 <4.0.0'
+          data['environment']['sdk'] = '>=3.10.0 <4.0.0'   # Updated for Dart 3.10+
 
-          # Fix each dependency: ensure latest stable version
-          # First, get latest versions from pub.dev for all dependencies
-          import subprocess, json
+          # Fix dependencies
           deps = data.get('dependencies', {})
           new_deps = {}
           for pkg, ver in deps.items():
               if pkg in ['flutter', 'flutter_test', 'cupertino_icons']:
                   new_deps[pkg] = ver
                   continue
-              # Query pub.dev
+              # Get latest version from pub.dev
               result = subprocess.run(['curl', '-s', f'https://pub.dev/api/packages/{pkg}'], capture_output=True, text=True)
               if result.returncode == 0:
                   try:
@@ -108,16 +105,14 @@ jobs:
                   print(f"⚠️ {pkg} could not be checked, keeping {ver}")
           data['dependencies'] = new_deps
 
-          # Write fixed pubspec.yaml
           with open('pubspec.yaml', 'w') as f:
               yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
-          print("✅ pubspec.yaml fixed successfully")
+          print("✅ pubspec.yaml fixed")
           PYTHON_FIX
 
       # ========== AUTO-FIX ANDROID PERMISSIONS ==========
       - name: Auto-fix Android permissions
         run: |
-          echo "🔧 Adding missing permissions..."
           cp android/app/src/main/AndroidManifest.xml.raw android/app/src/main/AndroidManifest.xml
           REQUIRED_PERMS=(
             "android.permission.INTERNET"
@@ -154,7 +149,7 @@ jobs:
       - name: Create assets folder
         run: mkdir -p assets
 
-      # ========== RELEASE SIGNING (optional) ==========
+      # ========== RELEASE SIGNING ==========
       - name: Decode Keystore
         run: |
           if [ -n "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" ]; then
@@ -188,7 +183,7 @@ jobs:
             'tasks.register("clean", Delete) { delete rootProject.buildDir }' \
             > android/build.gradle
 
-      - name: Write app/build.gradle (signed or debug)
+      - name: Write app/build.gradle
         run: |
           if [ -f "android/key.properties" ]; then
             printf '%s\n' \
