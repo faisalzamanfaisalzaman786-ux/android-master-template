@@ -1,4 +1,4 @@
-name: Filter App Builder (Flutter 3.35.0 + Dart 3.10)
+name: Filter App Builder (Flutter 3.35.0 + Dart 3.9)
 
 on:
   repository_dispatch:
@@ -17,7 +17,7 @@ jobs:
           java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.35.0'   # ✅ Dart 3.10.0, supports latest packages
+          flutter-version: '3.35.0'
           channel: 'stable'
           cache: true
 
@@ -74,10 +74,10 @@ jobs:
               data = {}
               print("⚠️ YAML parsing error, will regenerate")
 
-          # Fix environment SDK constraint to match Dart 3.10
+          # Fix environment SDK constraint to match Dart 3.9
           if 'environment' not in data or not isinstance(data['environment'], dict):
               data['environment'] = {}
-          data['environment']['sdk'] = '>=3.10.0 <4.0.0'
+          data['environment']['sdk'] = '>=3.9.0 <4.0.0'   # ✅ Updated to match Flutter 3.35.0 (Dart 3.9)
 
           # Fix dependencies
           deps = data.get('dependencies', {})
