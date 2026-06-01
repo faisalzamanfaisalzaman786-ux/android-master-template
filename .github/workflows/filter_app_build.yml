@@ -170,7 +170,7 @@ jobs:
             'tasks.register("clean", Delete) { delete rootProject.buildDir }' \
             > android/build.gradle
 
-      - name: Write app/build.gradle (signed or debug) with FIXED SDK versions
+      - name: Write app/build.gradle (signed or debug) with FIXED SDK versions (minSdk 24)
         run: |
           if [ -f "android/key.properties" ]; then
             printf '%s\n' \
@@ -183,7 +183,7 @@ jobs:
               '    compileSdk = 36' \
               '    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }' \
               '    kotlinOptions { jvmTarget = "17" }' \
-              '    defaultConfig { applicationId "'${{ env.PACKAGE_NAME }}'"; minSdk = 23; targetSdk = 34; versionCode = 1; versionName = "1.0" }' \
+              '    defaultConfig { applicationId "'${{ env.PACKAGE_NAME }}'"; minSdk = 24; targetSdk = 34; versionCode = 1; versionName = "1.0" }' \
               '    signingConfigs { release { keyAlias keystoreProperties["keyAlias"]; keyPassword keystoreProperties["keyPassword"]; storeFile file(keystoreProperties["storeFile"] ?: "release-keystore.jks"); storePassword keystoreProperties["storePassword"] } }' \
               '    buildTypes { release { signingConfig signingConfigs.release; minifyEnabled false; shrinkResources false } }' \
               '}' \
@@ -197,7 +197,7 @@ jobs:
               '    compileSdk = 36' \
               '    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }' \
               '    kotlinOptions { jvmTarget = "17" }' \
-              '    defaultConfig { applicationId "'${{ env.PACKAGE_NAME }}'"; minSdk = 23; targetSdk = 34; versionCode = 1; versionName = "1.0" }' \
+              '    defaultConfig { applicationId "'${{ env.PACKAGE_NAME }}'"; minSdk = 24; targetSdk = 34; versionCode = 1; versionName = "1.0" }' \
               '    buildTypes { release { signingConfig signingConfigs.debug; minifyEnabled false; shrinkResources false } }' \
               '}' \
               'flutter { source = "../.." }' \
