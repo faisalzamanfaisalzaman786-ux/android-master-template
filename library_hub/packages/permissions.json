@@ -1,11 +1,6 @@
 [
-  { "permission": "android.permission.CAMERA", "description": "کیمرہ", "required_by": ["camera"] },
-  { "permission": "android.permission.RECORD_AUDIO", "description": "آواز ریکارڈ", "required_by": ["microphone","speech"] },
-  { "permission": "android.permission.READ_EXTERNAL_STORAGE", "description": "اسٹوریج پڑھیں (Android ≤12)", "required_by": ["gallery"] },
-  { "permission": "android.permission.WRITE_EXTERNAL_STORAGE", "description": "اسٹوریج لکھیں", "required_by": ["gallery_saver"] },
-  { "permission": "android.permission.READ_MEDIA_IMAGES", "description": "تصاویر پڑھیں (Android 13+)", "required_by": ["image_picker"] },
-  { "permission": "android.permission.ACCESS_FINE_LOCATION", "description": "لوکیشن", "required_by": ["maps","location"] },
-  { "permission": "android.permission.BLUETOOTH_SCAN", "description": "بلوٹوتھ اسکین", "required_by": ["bluetooth"] },
-  { "permission": "android.permission.POST_NOTIFICATIONS", "description": "نوٹیفیکیشنز", "required_by": ["notifications"] },
-  { "permission": "android.permission.BODY_SENSORS", "description": "جسمانی سینسرز", "required_by": ["health"] }
+  {"permission":"android.permission.CAMERA","description":"کیمرہ","required_by":["camera"]},
+  {"permission":"android.permission.RECORD_AUDIO","description":"آواز","required_by":["microphone"]},
+  {"permission":"android.permission.READ_EXTERNAL_STORAGE","description":"اسٹوریج پڑھیں","required_by":["gallery"]},
+  {"permission":"android.permission.ACCESS_FINE_LOCATION","description":"لوکیشن","required_by":["maps"]}
 ]
