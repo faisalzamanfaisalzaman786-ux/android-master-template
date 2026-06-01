@@ -1,4 +1,4 @@
-name: Filter App Builder (Fixed SDK Versions)
+name: Filter App Builder (Optimized Caching)
 
 on:
   repository_dispatch:
@@ -11,20 +11,41 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.35.0'
           channel: 'stable'
-          cache: true
+          cache: true  # Already caches Flutter SDK
+
+      # ---------- Cache Gradle and Pub ----------
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Cache Pub
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PUB_CACHE }}
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
 
       - name: Save payload
         run: echo '${{ toJson(github.event.client_payload) }}' > payload.json
 
-      - name: Extract package and app name only (ignore other build_config)
+      - name: Extract package name and app name
         run: |
           PACKAGE_NAME=$(jq -r '.build_config.package_name // "com.filter.app"' payload.json)
           APP_NAME=$(jq -r '.build_config.app_display_name // "Filter App"' payload.json)
@@ -61,7 +82,7 @@ jobs:
             echo "❌ No pubspec.yaml in payload" && exit 1
           fi
 
-      # ========== CLEAN PUBSPEC.YAML (NO VERSIONS, ONLY NAMES) ==========
+      # ---------- Clean pubspec.yaml ----------
       - name: Create clean pubspec.yaml
         run: |
           cat > pubspec.yaml <<'EOF'
@@ -69,23 +90,18 @@ jobs:
           description: Auto-generated Flutter app
           version: 1.0.0+1
           publish_to: none
-
           environment:
             sdk: ">=3.0.0 <4.0.0"
-
           dependencies:
             flutter:
               sdk: flutter
-
           dev_dependencies:
             flutter_test:
               sdk: flutter
             flutter_lints: any
-
           flutter:
             uses-material-design: true
           EOF
-
           grep -E '^[ ]+[a-zA-Z_][a-zA-Z0-9_]*:' pubspec.yaml.raw | while read line; do
             pkg=$(echo "$line" | cut -d: -f1 | xargs)
             if [[ "$pkg" == "flutter" ]] || [[ "$pkg" == "flutter_test" ]] || [[ "$pkg" == "cupertino_icons" ]]; then
@@ -95,9 +111,8 @@ jobs:
               sed -i "/^dependencies:/a\  $pkg: any" pubspec.yaml
             fi
           done
-          echo "✅ Clean pubspec.yaml created"
 
-      # ========== AUTO-FIX ANDROID PERMISSIONS ==========
+      # ---------- Auto-fix permissions ----------
       - name: Auto-fix Android permissions
         run: |
           cp android/app/src/main/AndroidManifest.xml.raw android/app/src/main/AndroidManifest.xml
@@ -126,17 +141,16 @@ jobs:
           for perm in "${REQUIRED_PERMS[@]}"; do
             if ! grep -q "<uses-permission android:name=\"$perm\"" android/app/src/main/AndroidManifest.xml; then
               sed -i "s|</manifest>|    <uses-permission android:name=\"$perm\" />\n</manifest>|" android/app/src/main/AndroidManifest.xml
-              echo "➕ Added $perm"
             fi
           done
 
-      - name: Get dependencies
+      - name: Get dependencies (cached)
         run: flutter pub get
 
       - name: Create assets folder
         run: mkdir -p assets
 
-      # ========== RELEASE SIGNING (optional) ==========
+      # ---------- Signing (if secrets exist) ----------
       - name: Decode Keystore
         run: |
           if [ -n "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" ]; then
@@ -170,7 +184,7 @@ jobs:
             'tasks.register("clean", Delete) { delete rootProject.buildDir }' \
             > android/build.gradle
 
-      - name: Write app/build.gradle (signed or debug) with FIXED SDK versions (minSdk 24)
+      - name: Write app/build.gradle (minSdk 24)
         run: |
           if [ -f "android/key.properties" ]; then
             printf '%s\n' \
@@ -208,7 +222,7 @@ jobs:
         run: |
           sed -i "s/android:label=\".*\"/android:label=\"${{ env.APP_NAME }}\"/" android/app/src/main/AndroidManifest.xml
 
-      - name: Install ImageMagick
+      - name: Install ImageMagick (cached via apt)
         run: sudo apt-get update && sudo apt-get install -y imagemagick
 
       - name: Apply custom icon
