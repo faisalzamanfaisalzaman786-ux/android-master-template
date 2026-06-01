@@ -61,26 +61,37 @@ jobs:
             echo "❌ No pubspec.yaml in payload" && exit 1
           fi
 
-      # ========== REMOVE ALL VERSION CONSTRAINTS ==========
-      - name: Strip versions from pubspec.yaml
+      # ========== STRIP VERSIONS WITHOUT DUPLICATES ==========
+      - name: Clean pubspec.yaml
         run: |
-          # Keep only package names (no version constraints)
+          # Extract only the dependencies (ignore everything else)
+          # Start a fresh pubspec
+          cat > pubspec.yaml <<EOF
+          name: filter_app
+          description: Auto-generated app
+          version: 1.0.0+1
+          publish_to: none
+
+          environment:
+            sdk: ">=3.0.0 <4.0.0"
+
+          dependencies:
+            flutter:
+              sdk: flutter
+          EOF
+
+          # Add all dependencies from raw file but only the names (no version constraints)
           grep -E '^[ ]+[a-zA-Z_][a-zA-Z0-9_]*:' pubspec.yaml.raw | while read line; do
             pkg=$(echo "$line" | cut -d: -f1 | xargs)
-            if [[ "$pkg" == "flutter" ]] || [[ "$pkg" == "flutter_test" ]]; then
-              echo "  $pkg:" >> pubspec.yaml
-            else
-              echo "  $pkg: any" >> pubspec.yaml
+            # Skip flutter, flutter_test, and other special ones that are already in the file
+            if [[ "$pkg" == "flutter" ]] || [[ "$pkg" == "flutter_test" ]] || [[ "$pkg" == "cupertino_icons" ]]; then
+              continue
             fi
+            # Add the package with "any" version
+            echo "  $pkg: any" >> pubspec.yaml
           done
-          # Add minimal environment (no constraint)
-          echo "environment:" > pubspec.yaml.tmp
-          echo "  sdk: '>=3.0.0'" >> pubspec.yaml.tmp
-          echo "" >> pubspec.yaml.tmp
-          echo "dependencies:" >> pubspec.yaml.tmp
-          tail -n +2 pubspec.yaml >> pubspec.yaml.tmp
-          mv pubspec.yaml.tmp pubspec.yaml
-          echo "✅ Version constraints removed from pubspec.yaml"
+
+          echo "✅ Clean pubspec.yaml created with no version conflicts"
 
       # ========== AUTO-FIX ANDROID PERMISSIONS ==========
       - name: Auto-fix Android permissions
