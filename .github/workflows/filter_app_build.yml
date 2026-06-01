@@ -1,9 +1,18 @@
-name: Flutter APK Builder
+name: Flutter APK Builder (Custom Icon + Dynamic Package Name)
 
 on:
   push:
     branches: [ main, master ]
-  workflow_dispatch:   # allow manual trigger
+  workflow_dispatch:
+    inputs:
+      package_name:
+        description: 'Dynamic Package Name (e.g., com.mycompany.myapp)'
+        required: false
+        default: 'com.example.app'
+      app_name:
+        description: 'App Display Name'
+        required: false
+        default: 'My Flutter App'
 
 jobs:
   build:
@@ -17,96 +26,127 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.0'   # or stable
+          flutter-version: '3.22.0'
           channel: 'stable'
 
-      # ------------------------------------------------------------------
-      # Step that previously failed: restore AndroidManifest from backup
-      # Now safe: only runs if backup file exists, otherwise skips
-      # ------------------------------------------------------------------
-      - name: Restore custom AndroidManifest (if backup exists)
+      # ---------- Dynamic Package Name ----------
+      - name: Set package name from input or secret
+        id: package
         run: |
-          BACKUP_DIR="android_manifest_backup"
-          BACKUP_FILE="$BACKUP_DIR/AndroidManifest.xml"
-          if [ -f "$BACKUP_FILE" ]; then
-            echo "Found backup manifest, restoring to android/app/src/main/"
-            mkdir -p android/app/src/main
-            cp "$BACKUP_FILE" android/app/src/main/AndroidManifest.xml
+          if [ -n "${{ github.event.inputs.package_name }}" ]; then
+            PACKAGE="${{ github.event.inputs.package_name }}"
+          elif [ -n "${{ secrets.PACKAGE_NAME }}" ]; then
+            PACKAGE="${{ secrets.PACKAGE_NAME }}"
           else
-            echo "No backup manifest found at $BACKUP_FILE – skipping restore"
+            PACKAGE="com.example.app"
+          fi
+          echo "PACKAGE_NAME=$PACKAGE" >> $GITHUB_ENV
+          echo "Using package name: $PACKAGE"
+
+      - name: Update package name in AndroidManifest.xml
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if [ -f "$MANIFEST" ]; then
+            # Change package attribute in manifest tag
+            sed -i "s/package=\"[^\"]*\"/package=\"${{ env.PACKAGE_NAME }}\"/" "$MANIFEST"
           fi
 
-      # ------------------------------------------------------------------
-      # Write main.dart from a payload (example: from environment variable)
-      # Adjust source as needed (e.g., from a secret or file)
-      # ------------------------------------------------------------------
+      - name: Update package name in build.gradle
+        run: |
+          BUILD_GRADLE="android/app/build.gradle"
+          if [ -f "$BUILD_GRADLE" ]; then
+            sed -i "s/applicationId \".*\"/applicationId \"${{ env.PACKAGE_NAME }}\"/" "$BUILD_GRADLE"
+          fi
+
+      - name: Update Kotlin directory structure (dynamic package)
+        run: |
+          # Convert com.example.app to com/example/app
+          PKG_PATH=$(echo "${{ env.PACKAGE_NAME }}" | tr '.' '/')
+          mkdir -p "android/app/src/main/kotlin/$PKG_PATH"
+          echo "Kotlin path created: $PKG_PATH"
+
+      # ---------- Custom App Icon (Full Density Support) ----------
+      - name: Apply custom app icon (all densities)
+        run: |
+          # اگر آپ کے پاس mipmap-* فولڈرز میں مختلف سائز کی فائلیں ہیں تو یہ انہیں کاپی کرے گا
+          if [ -d "assets/icons" ]; then
+            # فرض کریں کہ assets/icons میں یہ فولڈرز ہیں:
+            # mdpi, hdpi, xhdpi, xxhdpi, xxxhdpi
+            for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+              if [ -f "assets/icons/$density/ic_launcher.png" ]; then
+                mkdir -p "android/app/src/main/res/mipmap-$density"
+                cp "assets/icons/$density/ic_launcher.png" "android/app/src/main/res/mipmap-$density/ic_launcher.png"
+                echo "Copied $density icon"
+              fi
+            done
+          elif [ -f "assets/ic_launcher.png" ]; then
+            # اگر صرف ایک ہی تصویر ہے تو اسے تمام densities میں اسکیل کرنا پڑے گا
+            # یہاں ہم سادہ کاپی کر رہے ہیں (مکمل اسکیلنگ کے لیے extra tool چاہیے)
+            for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+              mkdir -p "android/app/src/main/res/mipmap-$density"
+              cp "assets/ic_launcher.png" "android/app/src/main/res/mipmap-$density/ic_launcher.png"
+            done
+            echo "Single icon copied to all densities (scaling not applied)"
+          else
+            echo "No custom icon found - using default"
+          fi
+
+      # ---------- Restore Backup Manifest (safe) ----------
+      - name: Restore custom AndroidManifest (if backup exists)
+        run: |
+          BACKUP_FILE="android_manifest_backup/AndroidManifest.xml"
+          if [ -f "$BACKUP_FILE" ]; then
+            mkdir -p android/app/src/main
+            cp "$BACKUP_FILE" android/app/src/main/AndroidManifest.xml
+            echo "Backup manifest restored"
+          else
+            echo "No backup manifest"
+          fi
+
+      # ---------- Write main.dart from payload ----------
       - name: Write main.dart from payload
         run: |
-          PAYLOAD="${{ secrets.MAIN_DART_PAYLOAD }}"   # store your code in GitHub secret
+          PAYLOAD="${{ secrets.MAIN_DART_PAYLOAD }}"
           if [ -n "$PAYLOAD" ]; then
             mkdir -p lib
             echo "$PAYLOAD" > lib/main.dart
-            echo "main.dart written from secret payload"
+            echo "main.dart written from secret"
           else
-            echo "No payload secret provided – using existing lib/main.dart"
+            echo "Using existing lib/main.dart"
           fi
 
-      # ------------------------------------------------------------------
-      # Use repository's pubspec.yaml (already checked out)
-      # ------------------------------------------------------------------
       - name: Get dependencies
         run: flutter pub get
 
-      # ------------------------------------------------------------------
-      # Copy custom AndroidManifest.xml (if provided in repo root)
-      # ------------------------------------------------------------------
-      - name: Copy custom AndroidManifest (if present)
+      - name: Copy custom AndroidManifest from root (if present)
         run: |
           if [ -f "custom_AndroidManifest.xml" ]; then
             mkdir -p android/app/src/main
             cp custom_AndroidManifest.xml android/app/src/main/AndroidManifest.xml
-            echo "Applied custom AndroidManifest.xml from repository root"
-          else
-            echo "No custom_AndroidManifest.xml found – using default"
           fi
 
-      # ------------------------------------------------------------------
-      # Remove deprecated package attribute from manifest (if any)
-      # ------------------------------------------------------------------
       - name: Remove deprecated package attribute
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
             sed -i 's/package="[^"]*"//g' "$MANIFEST"
-            echo "Removed package attribute (if present)"
           fi
 
-      # ------------------------------------------------------------------
-      # Update app name in AndroidManifest.xml
-      # ------------------------------------------------------------------
-      - name: Update app name
+      - name: Update app name in AndroidManifest
         run: |
-          APP_NAME="My Flutter App"   # change as needed
+          APP_NAME="${{ github.event.inputs.app_name }}"
+          if [ -z "$APP_NAME" ]; then
+            APP_NAME="My Flutter App"
+          fi
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST" ]; then
             sed -i "s/<application /<application android:label=\"$APP_NAME\" /" "$MANIFEST"
           fi
 
-      # ------------------------------------------------------------------
-      # Fix Kotlin directory structure (ensure main/kotlin exists)
-      # ------------------------------------------------------------------
-      - name: Fix Kotlin directory structure
-        run: |
-          mkdir -p android/app/src/main/kotlin/com/example/app
-          echo "Kotlin directories created"
-
-      # ------------------------------------------------------------------
-      # Generate build.gradle (Groovy) – optional, only if missing
-      # ------------------------------------------------------------------
       - name: Generate build.gradle (if missing)
         run: |
           if [ ! -f "android/app/build.gradle" ]; then
-            cat > android/app/build.gradle << 'EOF'
+            cat > android/app/build.gradle << EOF
             def localProperties = new Properties()
             def localPropertiesFile = rootProject.file('local.properties')
             if (localPropertiesFile.exists()) {
@@ -116,10 +156,10 @@ jobs:
             }
             def flutterRoot = localProperties.getProperty('flutter.sdk')
             if (flutterRoot == null) {
-                throw new GradleException("Flutter SDK not found. Define location with flutter.sdk in the local.properties file.")
+                throw new GradleException("Flutter SDK not found.")
             }
             apply plugin: 'com.android.application'
-            apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
+            apply from: "\$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
             android {
                 compileSdkVersion 34
                 compileOptions {
@@ -127,7 +167,7 @@ jobs:
                     targetCompatibility JavaVersion.VERSION_1_8
                 }
                 defaultConfig {
-                    applicationId "com.example.app"
+                    applicationId "${{ env.PACKAGE_NAME }}"
                     minSdkVersion 21
                     targetSdkVersion 34
                     versionCode 1
@@ -143,36 +183,15 @@ jobs:
                 source '../..'
             }
             EOF
-            echo "Generated default build.gradle"
-          else
-            echo "build.gradle already exists"
+            echo "Generated build.gradle"
           fi
 
-      # ------------------------------------------------------------------
-      # Apply custom app icon (improved) – copy from assets if available
-      # ------------------------------------------------------------------
-      - name: Apply custom app icon
-        run: |
-          if [ -f "assets/ic_launcher.png" ]; then
-            mkdir -p android/app/src/main/res/mipmap-hdpi
-            cp assets/ic_launcher.png android/app/src/main/res/mipmap-hdpi/ic_launcher.png
-            echo "Custom icon applied (simple override)"
-          else
-            echo "No custom icon found – using default"
-          fi
-
-      # ------------------------------------------------------------------
-      # Build release APK
-      # ------------------------------------------------------------------
       - name: Build release APK
         run: flutter build apk --release
 
-      # ------------------------------------------------------------------
-      # Upload APK artifact
-      # ------------------------------------------------------------------
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk
+          name: release-apk-${{ env.PACKAGE_NAME }}
           path: build/app/outputs/flutter-apk/app-release.apk
           retention-days: 7
