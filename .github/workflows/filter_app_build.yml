@@ -3,10 +3,10 @@ name: Flutter APK Builder (Stable with all features)
 on:
   push:
     branches: [ main, master ]
-  workflow_dispatch:
-    inputs:
+  workflow_dispatch:                    # ✅ اب یہ push کے برابر لیول پر ہے
+    inputs:                             # ✅ inputs صحیح طریقے سے انڈینٹ ہیں
       package_name:
-        description: 'Dynamic Package Name (e.g., com.mycompany.myapp)'
+        description: 'Dynamic Package Name (e.g., com.example.app)'
         required: false
         default: 'com.example.app'
       app_name:
@@ -26,7 +26,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.27.0'   # Dart 3.6.0 – supports permission_handler >=11.4.0
+          flutter-version: '3.27.0'
           channel: 'stable'
 
       # ---------- Dynamic Package Name ----------
