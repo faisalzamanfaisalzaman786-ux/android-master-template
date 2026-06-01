@@ -1,4 +1,4 @@
-name: Filter App Builder (Flutter 3.35.0 + share_plus fix)
+name: Filter App Builder (Version-Free, Fully Automatic)
 
 on:
   repository_dispatch:
@@ -61,59 +61,26 @@ jobs:
             echo "❌ No pubspec.yaml in payload" && exit 1
           fi
 
-      # ========== AUTO-FIX PUBSPEC.YAML (Python with share_plus override) ==========
-      - name: Auto-fix pubspec.yaml with Python
+      # ========== REMOVE ALL VERSION CONSTRAINTS ==========
+      - name: Strip versions from pubspec.yaml
         run: |
-          python3 << 'PYTHON_FIX'
-          import re, yaml, sys, subprocess, json
-          with open('pubspec.yaml.raw', 'r') as f:
-              content = f.read()
-          try:
-              data = yaml.safe_load(content)
-          except:
-              data = {}
-              print("⚠️ YAML parsing error, will regenerate")
-
-          # Fix environment SDK constraint to match Dart 3.9
-          if 'environment' not in data or not isinstance(data['environment'], dict):
-              data['environment'] = {}
-          data['environment']['sdk'] = '>=3.9.0 <4.0.0'
-
-          # Fix dependencies
-          deps = data.get('dependencies', {})
-          new_deps = {}
-          for pkg, ver in deps.items():
-              if pkg in ['flutter', 'flutter_test', 'cupertino_icons']:
-                  new_deps[pkg] = ver
-                  continue
-              # Special handling for share_plus (avoid version 13+ which needs Dart 3.10)
-              if pkg == 'share_plus':
-                  new_deps[pkg] = '^12.0.0'
-                  print(f"✅ {pkg} -> ^12.0.0 (forced compatible version)")
-                  continue
-              # Get latest version from pub.dev
-              result = subprocess.run(['curl', '-s', f'https://pub.dev/api/packages/{pkg}'], capture_output=True, text=True)
-              if result.returncode == 0:
-                  try:
-                      info = json.loads(result.stdout)
-                      latest = info.get('latest', {}).get('version')
-                      if latest:
-                          new_deps[pkg] = f'^{latest}'
-                          print(f"✅ {pkg} -> {latest}")
-                      else:
-                          new_deps[pkg] = ver
-                          print(f"⚠️ {pkg} no version found, keeping {ver}")
-                  except:
-                      new_deps[pkg] = ver
-              else:
-                  new_deps[pkg] = ver
-                  print(f"⚠️ {pkg} could not be checked, keeping {ver}")
-          data['dependencies'] = new_deps
-
-          with open('pubspec.yaml', 'w') as f:
-              yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
-          print("✅ pubspec.yaml fixed")
-          PYTHON_FIX
+          # Keep only package names (no version constraints)
+          grep -E '^[ ]+[a-zA-Z_][a-zA-Z0-9_]*:' pubspec.yaml.raw | while read line; do
+            pkg=$(echo "$line" | cut -d: -f1 | xargs)
+            if [[ "$pkg" == "flutter" ]] || [[ "$pkg" == "flutter_test" ]]; then
+              echo "  $pkg:" >> pubspec.yaml
+            else
+              echo "  $pkg: any" >> pubspec.yaml
+            fi
+          done
+          # Add minimal environment (no constraint)
+          echo "environment:" > pubspec.yaml.tmp
+          echo "  sdk: '>=3.0.0'" >> pubspec.yaml.tmp
+          echo "" >> pubspec.yaml.tmp
+          echo "dependencies:" >> pubspec.yaml.tmp
+          tail -n +2 pubspec.yaml >> pubspec.yaml.tmp
+          mv pubspec.yaml.tmp pubspec.yaml
+          echo "✅ Version constraints removed from pubspec.yaml"
 
       # ========== AUTO-FIX ANDROID PERMISSIONS ==========
       - name: Auto-fix Android permissions
