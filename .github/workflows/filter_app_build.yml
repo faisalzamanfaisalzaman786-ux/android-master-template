@@ -9,17 +9,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.29.2'
           channel: 'stable'
@@ -39,39 +34,29 @@ jobs:
         run: |
           PKG="${{ env.PACKAGE_NAME }}"
           ORG=$(echo "$PKG" | rev | cut -d. -f2- | rev)
-          PROJ=$(echo "$PKG" | rev | cut -d. -f1 | rev)
-          PROJ=$(echo "$PROJ" | tr '-' '_' | sed 's/^[0-9]/_&/')
+          PROJ=$(echo "$PKG" | rev | cut -d. -f1 | rev | tr '-' '_' | sed 's/^[0-9]/_&/')
           rm -rf android ios .dart_tool build
           flutter create --org "$ORG" --project-name "$PROJ" --platforms=android .
 
-      - name: Write main.dart from payload
+      - name: Write main.dart
         run: |
           MAIN_B64=$(jq -r '.source_files.main_dart // ""' payload.json)
-          if [ -z "$MAIN_B64" ] || [ "$MAIN_B64" = "null" ]; then
-            echo "❌ No main.dart provided"
-            exit 1
-          fi
+          [ -z "$MAIN_B64" ] || [ "$MAIN_B64" = "null" ] && echo "❌ No main.dart" && exit 1
           echo "$MAIN_B64" | base64 -d > lib/main.dart
 
-      - name: Write AndroidManifest.xml from payload
+      - name: Write AndroidManifest.xml
         run: |
           MANIFEST_B64=$(jq -r '.source_files.android_manifest // ""' payload.json)
-          if [ -z "$MANIFEST_B64" ] || [ "$MANIFEST_B64" = "null" ]; then
-            echo "❌ No AndroidManifest.xml provided"
-            exit 1
-          fi
+          [ -z "$MANIFEST_B64" ] || [ "$MANIFEST_B64" = "null" ] && echo "❌ No manifest" && exit 1
           mkdir -p android/app/src/main
           echo "$MANIFEST_B64" | base64 -d > android/app/src/main/AndroidManifest.xml
 
       - name: Use repository pubspec.yaml
         run: |
-          if [ ! -f "pubspec.yaml" ]; then
-            echo "❌ pubspec.yaml not found in repository"
-            exit 1
-          fi
+          [ ! -f "pubspec.yaml" ] && echo "❌ pubspec.yaml not found" && exit 1
           flutter pub get
 
-      - name: Generate build.gradle (Groovy)
+      - name: Generate build.gradle
         run: |
           cat > android/build.gradle <<'EOF'
           buildscript {
@@ -120,14 +105,12 @@ jobs:
           }
           flutter { source = "../.." }
           EOF
-          echo "✅ build.gradle generated"
 
-      - name: Update app name in manifest
+      - name: Update app name
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          sed -i "s/android:label=\".*\"/android:label=\"${{ env.APP_NAME }}\"/" $MANIFEST
+          sed -i "s/android:label=\".*\"/android:label=\"${{ env.APP_NAME }}\"/" android/app/src/main/AndroidManifest.xml
 
-      - name: Build release APK
+      - name: Build APK
         run: flutter build apk --release
 
       - name: Upload APK
