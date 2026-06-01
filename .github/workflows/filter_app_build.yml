@@ -1,4 +1,4 @@
-name: Filter App Builder
+name: Stable Base (Use Repo AndroidManifest from Backup)
 
 on:
   repository_dispatch:
@@ -7,57 +7,104 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java for Gradle
+        uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-      - uses: subosito/flutter-action@v2
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.29.2'
           channel: 'stable'
           cache: true
 
-      - name: Save payload
+      - name: Save payload to file
         run: echo '${{ toJson(github.event.client_payload) }}' > payload.json
 
-      - name: Extract config
+      - name: Extract build config
+        id: config
         run: |
           PACKAGE_NAME=$(jq -r '.build_config.package_name // "com.filter.app"' payload.json)
           APP_NAME=$(jq -r '.build_config.app_display_name // "Filter App"' payload.json)
+          MIN_SDK=$(jq -r '.build_config.min_sdk // 21' payload.json)
+          TARGET_SDK=$(jq -r '.build_config.target_sdk // 34' payload.json)
+          USE_PROGUARD=$(jq -r '.build_config.use_proguard // false' payload.json)
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
           echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
+          echo "MIN_SDK=$MIN_SDK" >> $GITHUB_ENV
+          echo "TARGET_SDK=$TARGET_SDK" >> $GITHUB_ENV
+          echo "USE_PROGUARD=$USE_PROGUARD" >> $GITHUB_ENV
 
-      - name: Create fresh Flutter project
+      - name: Create fresh Flutter project (Kotlin default)
         run: |
           PKG="${{ env.PACKAGE_NAME }}"
           ORG=$(echo "$PKG" | rev | cut -d. -f2- | rev)
-          PROJ=$(echo "$PKG" | rev | cut -d. -f1 | rev | tr '-' '_' | sed 's/^[0-9]/_&/')
+          PROJ=$(echo "$PKG" | rev | cut -d. -f1 | rev)
           rm -rf android ios .dart_tool build
           flutter create --org "$ORG" --project-name "$PROJ" --platforms=android .
+          echo "✅ Fresh Flutter project created"
 
-      - name: Write main.dart
+      - name: Write main.dart from payload
         run: |
           MAIN_B64=$(jq -r '.source_files.main_dart // ""' payload.json)
-          [ -z "$MAIN_B64" ] || [ "$MAIN_B64" = "null" ] && echo "❌ No main.dart" && exit 1
+          if [ -z "$MAIN_B64" ] || [ "$MAIN_B64" = "null" ]; then
+            echo "❌ No main.dart provided"
+            exit 1
+          fi
           echo "$MAIN_B64" | base64 -d > lib/main.dart
-
-      - name: Write AndroidManifest.xml
-        run: |
-          MANIFEST_B64=$(jq -r '.source_files.android_manifest // ""' payload.json)
-          [ -z "$MANIFEST_B64" ] || [ "$MANIFEST_B64" = "null" ] && echo "❌ No manifest" && exit 1
-          mkdir -p android/app/src/main
-          echo "$MANIFEST_B64" | base64 -d > android/app/src/main/AndroidManifest.xml
+          echo "✅ main.dart written"
 
       - name: Use repository pubspec.yaml
         run: |
-          [ ! -f "pubspec.yaml" ] && echo "❌ pubspec.yaml not found" && exit 1
+          if [ ! -f "pubspec.yaml" ]; then
+            echo "❌ pubspec.yaml not found in repository root!"
+            exit 1
+          fi
           flutter pub get
 
-      - name: Generate build.gradle
+      - name: Copy custom AndroidManifest.xml from repository backup
         run: |
+          if [ -f "android_manifest_backup/AndroidManifest.xml" ]; then
+            cp android_manifest_backup/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+            echo "✅ Custom AndroidManifest.xml copied from repository backup"
+          else
+            echo "❌ android_manifest_backup/AndroidManifest.xml not found in repository"
+            exit 1
+          fi
+
+      - name: Remove deprecated package attribute from AndroidManifest.xml
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          if grep -q 'package="' "$MANIFEST"; then
+            sed -i 's/package="[^"]*"//' "$MANIFEST"
+            echo "✅ Removed package attribute"
+          fi
+
+      - name: Update app name in AndroidManifest.xml
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          sed -i "s/android:label=\".*\"/android:label=\"${{ env.APP_NAME }}\"/" $MANIFEST
+          echo "✅ App name updated"
+
+      - name: Fix Kotlin directory structure
+        run: |
+          PKG_PATH=$(echo "${{ env.PACKAGE_NAME }}" | tr '.' '/')
+          mkdir -p android/app/src/main/kotlin/$PKG_PATH
+          if [ -f "android/app/src/main/kotlin/com/example/app/MainActivity.kt" ]; then
+            mv android/app/src/main/kotlin/com/example/app/MainActivity.kt android/app/src/main/kotlin/$PKG_PATH/MainActivity.kt
+            rm -rf android/app/src/main/kotlin/com
+          fi
+          echo "✅ Kotlin structure fixed"
+
+      - name: Generate build.gradle (Groovy)
+        run: |
+          rm -f android/build.gradle.kts android/app/build.gradle.kts
           cat > android/build.gradle <<'EOF'
           buildscript {
               ext.kotlin_version = '1.9.0'
@@ -90,31 +137,50 @@ jobs:
               kotlinOptions { jvmTarget = "17" }
               defaultConfig {
                   applicationId = "${{ env.PACKAGE_NAME }}"
-                  minSdk = 21
-                  targetSdk = 34
+                  minSdk = ${{ env.MIN_SDK }}
+                  targetSdk = ${{ env.TARGET_SDK }}
                   versionCode = 1
                   versionName = "1.0"
               }
               buildTypes {
                   release {
                       signingConfig = signingConfigs.debug
-                      minifyEnabled = false
-                      shrinkResources = false
+                      minifyEnabled = ${{ env.USE_PROGUARD }}
+                      shrinkResources = ${{ env.USE_PROGUARD }}
+                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
                   }
+                  debug { minifyEnabled = false }
               }
           }
           flutter { source = "../.." }
           EOF
+          echo "✅ build.gradle generated"
 
-      - name: Update app name
+      - name: Apply custom app icon (improved)
         run: |
-          sed -i "s/android:label=\".*\"/android:label=\"${{ env.APP_NAME }}\"/" android/app/src/main/AndroidManifest.xml
+          ICON_B64=$(jq -r '.assets.app_icon_base64 // ""' payload.json)
+          if [ -n "$ICON_B64" ] && [ "$ICON_B64" != "null" ]; then
+            echo "$ICON_B64" | tr -d '\n\r' | base64 -d > icon.png
+            if [ -s icon.png ]; then
+              for density in hdpi mdpi xhdpi xxhdpi xxxhdpi; do
+                mkdir -p android/app/src/main/res/mipmap-$density
+                cp icon.png android/app/src/main/res/mipmap-$density/ic_launcher.png
+              done
+              mkdir -p android/app/src/main/res/drawable
+              cp icon.png android/app/src/main/res/drawable/ic_launcher.png
+              echo "✅ Custom app icon applied successfully"
+            else
+              echo "⚠️ Decoded icon.png is empty, using default icon"
+            fi
+          else
+            echo "ℹ️ No custom icon provided, using default Flutter icon"
+          fi
 
-      - name: Build APK
+      - name: Build release APK
         run: flutter build apk --release
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FilterApp-${{ github.run_number }}
+          name: FilterApp-${{ env.PACKAGE_NAME }}-${{ github.run_number }}
           path: build/app/outputs/flutter-apk/app-release.apk
