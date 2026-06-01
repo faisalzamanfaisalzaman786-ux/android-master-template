@@ -1,20 +1,8 @@
-name: Flutter APK Builder (UI + Manual)
+name: Filter App Builder
 
 on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
-    inputs:
-      package_name:
-        description: 'Dynamic Package Name'
-        required: false
-        default: 'com.example.app'
-      app_name:
-        description: 'App Display Name'
-        required: false
-        default: 'My Flutter App'
   repository_dispatch:
-    types: [filter_app_build]    # 👈 UI سے ٹرگر ہونے کے لیے
+    types: [filter_app_build]
 
 jobs:
   build:
@@ -22,164 +10,160 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: actions/setup-java@v4
         with:
-          flutter-version: '3.27.0'
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.2'
           channel: 'stable'
+          cache: true
 
-      # ---------- Extract payload from UI (if repository_dispatch) ----------
-      - name: Process UI Payload
-        id: ui_payload
+      - name: Save payload
+        run: echo '${{ toJson(github.event.client_payload) }}' > payload.json
+
+      - name: Extract config
         run: |
-          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "UI_PAYLOAD_MODE=true" >> $GITHUB_ENV
-            # Save payload to environment variables
-            echo "PAYLOAD_MAIN_DART=${{ toJson(github.event.client_payload.source_files.main_dart) }}" >> $GITHUB_ENV
-            echo "PAYLOAD_MANIFEST=${{ toJson(github.event.client_payload.source_files.android_manifest) }}" >> $GITHUB_ENV
-            echo "PAYLOAD_BUILD_TYPE=${{ github.event.client_payload.build_config.build_type }}" >> $GITHUB_ENV
-            echo "PAYLOAD_MIN_SDK=${{ github.event.client_payload.build_config.min_sdk }}" >> $GITHUB_ENV
-            echo "PAYLOAD_TARGET_SDK=${{ github.event.client_payload.build_config.target_sdk }}" >> $GITHUB_ENV
-            echo "PAYLOAD_PACKAGE_NAME=${{ github.event.client_payload.build_config.package_name }}" >> $GITHUB_ENV
-            echo "PAYLOAD_APP_NAME=${{ github.event.client_payload.build_config.app_display_name }}" >> $GITHUB_ENV
-            echo "PAYLOAD_PROGUARD=${{ github.event.client_payload.build_config.use_proguard }}" >> $GITHUB_ENV
-            echo "PAYLOAD_ICON=${{ github.event.client_payload.assets.app_icon_base64 }}" >> $GITHUB_ENV
-          else
-            echo "UI_PAYLOAD_MODE=false" >> $GITHUB_ENV
-          fi
+          PACKAGE_NAME=$(jq -r '.build_config.package_name // "com.filter.app"' payload.json)
+          APP_NAME=$(jq -r '.build_config.app_display_name // "Filter App"' payload.json)
+          echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
+          echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
 
-      # ---------- Set final package name & app name (UI or manual) ----------
-      - name: Determine Package and App Name
-        id: names
+      - name: Create fresh Flutter project
         run: |
-          if [ "$UI_PAYLOAD_MODE" = "true" ]; then
-            PACKAGE="${{ env.PAYLOAD_PACKAGE_NAME }}"
-            APP_NAME="${{ env.PAYLOAD_APP_NAME }}"
-          else
-            PACKAGE="${{ github.event.inputs.package_name }}"
-            APP_NAME="${{ github.event.inputs.app_name }}"
-          fi
-          # Defaults if empty
-          [ -z "$PACKAGE" ] && PACKAGE="com.example.app"
-          [ -z "$APP_NAME" ] && APP_NAME="My Flutter App"
-          echo "PACKAGE_NAME=$PACKAGE" >> $GITHUB_ENV
-          echo "APP_DISPLAY_NAME=$APP_NAME" >> $GITHUB_ENV
+          PKG="${{ env.PACKAGE_NAME }}"
+          ORG=$(echo "$PKG" | rev | cut -d. -f2- | rev)
+          PROJ=$(echo "$PKG" | rev | cut -d. -f1 | rev | tr '-' '_' | sed 's/^[0-9]/_&/')
+          rm -rf android ios .dart_tool build
+          flutter create --org "$ORG" --project-name "$PROJ" --platforms=android .
 
-      # ---------- Write main.dart from UI payload or existing ----------
       - name: Write main.dart
         run: |
-          mkdir -p lib
-          if [ "$UI_PAYLOAD_MODE" = "true" ]; then
-            echo "${{ env.PAYLOAD_MAIN_DART }}" | base64 -d > lib/main.dart
-            echo "main.dart written from UI payload"
-          elif [ -n "${{ secrets.MAIN_DART_PAYLOAD }}" ]; then
-            echo "${{ secrets.MAIN_DART_PAYLOAD }}" > lib/main.dart
-            echo "main.dart written from secret"
-          else
-            echo "Using existing lib/main.dart"
-          fi
+          MAIN_B64=$(jq -r '.source_files.main_dart // ""' payload.json)
+          [ -z "$MAIN_B64" ] || [ "$MAIN_B64" = "null" ] && echo "❌ No main.dart" && exit 1
+          echo "$MAIN_B64" | base64 -d > lib/main.dart
 
-      # ---------- Write AndroidManifest.xml from UI payload or backup ----------
       - name: Write AndroidManifest.xml
         run: |
+          MANIFEST_B64=$(jq -r '.source_files.android_manifest // ""' payload.json)
+          [ -z "$MANIFEST_B64" ] || [ "$MANIFEST_B64" = "null" ] && echo "❌ No manifest" && exit 1
           mkdir -p android/app/src/main
-          if [ "$UI_PAYLOAD_MODE" = "true" ]; then
-            echo "${{ env.PAYLOAD_MANIFEST }}" | base64 -d > android/app/src/main/AndroidManifest.xml
-            echo "AndroidManifest.xml written from UI payload"
-          elif [ -f "android_manifest_backup/AndroidManifest.xml" ]; then
-            cp android_manifest_backup/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
-            echo "Restored from backup"
-          fi
+          echo "$MANIFEST_B64" | base64 -d > android/app/src/main/AndroidManifest.xml
 
-      # ---------- Apply build config from UI (minSdk, targetSdk, proguard) ----------
-      - name: Apply build config
+      - name: Use repository pubspec.yaml
         run: |
-          if [ "$UI_PAYLOAD_MODE" = "true" ]; then
-            BUILD_GRADLE="android/app/build.gradle"
-            if [ -f "$BUILD_GRADLE" ]; then
-              sed -i "s/minSdkVersion [0-9]*/minSdkVersion ${{ env.PAYLOAD_MIN_SDK }}/" "$BUILD_GRADLE"
-              sed -i "s/targetSdkVersion [0-9]*/targetSdkVersion ${{ env.PAYLOAD_TARGET_SDK }}/" "$BUILD_GRADLE"
-              if [ "${{ env.PAYLOAD_PROGUARD }}" = "true" ]; then
-                sed -i '/release {/a \ \ \ \ \ \ \ \ minifyEnabled true\n                proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"' "$BUILD_GRADLE"
-              fi
-            fi
-          fi
+          [ ! -f "pubspec.yaml" ] && echo "❌ pubspec.yaml not found" && exit 1
+          flutter pub get
 
-      # ---------- Update package name in AndroidManifest & build.gradle ----------
-      - name: Update package name
+      - name: Generate build.gradle
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ]; then
-            sed -i "s/package=\"[^\"]*\"/package=\"${{ env.PACKAGE_NAME }}\"/" "$MANIFEST"
-          fi
-          BUILD_GRADLE="android/app/build.gradle"
-          if [ -f "$BUILD_GRADLE" ]; then
-            sed -i "s/applicationId \".*\"/applicationId \"${{ env.PACKAGE_NAME }}\"/" "$BUILD_GRADLE"
-          fi
+          cat > android/build.gradle <<'EOF'
+          buildscript {
+              ext.kotlin_version = '1.9.0'
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+              dependencies {
+                  classpath 'com.android.tools.build:gradle:7.3.0'
+                  classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+              }
+          }
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.buildDir = '../build'
+          subprojects {
+              project.buildDir = "${rootProject.buildDir}/${project.name}"
+          }
+          subprojects {
+              project.evaluationDependsOn(':app')
+          }
+          tasks.register('clean', Delete) {
+              delete rootProject.buildDir
+          }
+          EOF
 
-      # ---------- Update app name in AndroidManifest ----------
+          cat > android/app/build.gradle <<EOF
+          plugins {
+              id "com.android.application"
+              id "kotlin-android"
+              id "dev.flutter.flutter-gradle-plugin"
+          }
+          android {
+              namespace "${{ env.PACKAGE_NAME }}"
+              compileSdk = 35
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+              defaultConfig {
+                  applicationId = "${{ env.PACKAGE_NAME }}"
+                  minSdk = 21
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              buildTypes {
+                  release {
+                      signingConfig = signingConfigs.debug
+                      minifyEnabled = false
+                      shrinkResources = false
+                  }
+              }
+          }
+          flutter {
+              source = "../.."
+          }
+          EOF
+
       - name: Update app name
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if [ -f "$MANIFEST" ]; then
-            sed -i "s/android:label=\"[^\"]*\"/android:label=\"${{ env.APP_DISPLAY_NAME }}\"/" "$MANIFEST"
-          fi
+          sed -i "s/android:label=\".*\"/android:label=\"${{ env.APP_NAME }}\"/" android/app/src/main/AndroidManifest.xml
 
-      # ---------- Apply custom icon (from UI base64) ----------
-      - name: Apply custom icon from UI
-        if: env.UI_PAYLOAD_MODE == 'true' && env.PAYLOAD_ICON != ''
+      # ---------- NEW: Apply custom app icon from UI payload ----------
+      - name: Install ImageMagick (for icon resizing)
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
+      - name: Extract and apply custom icon
         run: |
-          ICON_DATA="${{ env.PAYLOAD_ICON }}"
-          # Decode base64 to temporary PNG
-          echo "$ICON_DATA" | base64 -d > /tmp/icon.png
-          # Convert to Android mipmap densities using ImageMagick (if available)
-          sudo apt-get update && sudo apt-get install -y imagemagick
-          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            case $density in
-              mdpi) size=48 ;;
-              hdpi) size=72 ;;
-              xhdpi) size=96 ;;
-              xxhdpi) size=144 ;;
-              xxxhdpi) size=192 ;;
-            esac
-            mkdir -p android/app/src/main/res/mipmap-$density
-            convert /tmp/icon.png -resize ${size}x${size} android/app/src/main/res/mipmap-$density/ic_launcher.png
-          done
-          echo "Custom icon applied from UI"
-
-      # ---------- If no icon from UI, fallback to assets ----------
-      - name: Apply custom icon from assets (fallback)
-        if: env.UI_PAYLOAD_MODE != 'true' || env.PAYLOAD_ICON == ''
-        run: |
-          if [ -d "assets/icons" ]; then
+          ICON_B64=$(jq -r '.assets.app_icon_base64 // ""' payload.json)
+          if [ -n "$ICON_B64" ] && [ "$ICON_B64" != "null" ]; then
+            echo "✅ Custom icon found, applying..."
+            echo "$ICON_B64" | base64 -d > /tmp/icon_raw.png
+            # Generate all mipmap densities
             for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-              if [ -f "assets/icons/$density/ic_launcher.png" ]; then
-                mkdir -p "android/app/src/main/res/mipmap-$density"
-                cp "assets/icons/$density/ic_launcher.png" "android/app/src/main/res/mipmap-$density/ic_launcher.png"
-              fi
+              case $density in
+                mdpi) size=48 ;;
+                hdpi) size=72 ;;
+                xhdpi) size=96 ;;
+                xxhdpi) size=144 ;;
+                xxxhdpi) size=192 ;;
+              esac
+              mkdir -p android/app/src/main/res/mipmap-$density
+              convert /tmp/icon_raw.png -resize ${size}x${size} android/app/src/main/res/mipmap-$density/ic_launcher.png
             done
-          elif [ -f "assets/ic_launcher.png" ]; then
-            for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-              mkdir -p "android/app/src/main/res/mipmap-$density"
-              cp "assets/ic_launcher.png" "android/app/src/main/res/mipmap-$density/ic_launcher.png"
-            done
+            echo "✅ Custom icon applied successfully."
+          else
+            echo "ℹ️ No custom icon in payload – using default Flutter icon."
           fi
+      # ----------------------------------------------------------------
 
-      # ---------- Get dependencies ----------
-      - name: Get dependencies
-        run: flutter pub get
-
-      # ---------- Build release APK ----------
-      - name: Build release APK
+      - name: Build APK
         run: flutter build apk --release
 
-      # ---------- Upload APK artifact ----------
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk-${{ env.PACKAGE_NAME }}
+          name: FilterApp-${{ github.run_number }}
           path: build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 7
