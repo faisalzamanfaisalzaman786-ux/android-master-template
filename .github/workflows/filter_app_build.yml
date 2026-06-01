@@ -1,4 +1,4 @@
-name: Filter App Builder (Flutter 3.35.0 + Dart 3.9)
+name: Filter App Builder (Flutter 3.35.0 + share_plus fix)
 
 on:
   repository_dispatch:
@@ -61,7 +61,7 @@ jobs:
             echo "❌ No pubspec.yaml in payload" && exit 1
           fi
 
-      # ========== AUTO-FIX PUBSPEC.YAML (Python) ==========
+      # ========== AUTO-FIX PUBSPEC.YAML (Python with share_plus override) ==========
       - name: Auto-fix pubspec.yaml with Python
         run: |
           python3 << 'PYTHON_FIX'
@@ -77,7 +77,7 @@ jobs:
           # Fix environment SDK constraint to match Dart 3.9
           if 'environment' not in data or not isinstance(data['environment'], dict):
               data['environment'] = {}
-          data['environment']['sdk'] = '>=3.9.0 <4.0.0'   # ✅ Updated to match Flutter 3.35.0 (Dart 3.9)
+          data['environment']['sdk'] = '>=3.9.0 <4.0.0'
 
           # Fix dependencies
           deps = data.get('dependencies', {})
@@ -85,6 +85,11 @@ jobs:
           for pkg, ver in deps.items():
               if pkg in ['flutter', 'flutter_test', 'cupertino_icons']:
                   new_deps[pkg] = ver
+                  continue
+              # Special handling for share_plus (avoid version 13+ which needs Dart 3.10)
+              if pkg == 'share_plus':
+                  new_deps[pkg] = '^12.0.0'
+                  print(f"✅ {pkg} -> ^12.0.0 (forced compatible version)")
                   continue
               # Get latest version from pub.dev
               result = subprocess.run(['curl', '-s', f'https://pub.dev/api/packages/{pkg}'], capture_output=True, text=True)
