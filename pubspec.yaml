@@ -23,10 +23,6 @@ dependencies:
   flutter_bloc: ^8.1.6
   get: ^4.6.6
 
-  # Background Tasks
-  workmanager: ^0.5.2
-  flutter_background_service: ^5.0.1
-
   # Database & Storage
   sqflite: ^2.4.1
   hive_flutter: ^1.1.0
