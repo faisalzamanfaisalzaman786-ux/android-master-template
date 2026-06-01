@@ -1,5 +1,5 @@
 name: universal_app_template
-description: A universal Flutter app with all possible dependencies.
+description: A universal Flutter app with all essential dependencies.
 version: 1.0.0+1
 publish_to: none
 
@@ -22,14 +22,13 @@ dependencies:
   # ==================== STATE MANAGEMENT ====================
   provider: ^6.1.2
   flutter_riverpod: ^2.6.1
-  riverpod_annotation: ^2.3.5
   bloc: ^8.1.4
   flutter_bloc: ^8.1.6
   get: ^4.6.6
   mobx: ^2.3.0
   flutter_mobx: ^2.2.0
 
-  # ==================== BACKGROUND SERVICES & TASKS ====================
+  # ==================== BACKGROUND SERVICES ====================
   workmanager: ^0.5.2
   flutter_background_service: ^5.0.1
   android_alarm_manager_plus: ^4.0.3
@@ -38,11 +37,9 @@ dependencies:
   alarm: ^3.1.0
   cron: ^0.6.0
 
-  # ==================== TOUCH & GESTURES ====================
-  gesture_detector: ^0.0.2
+  # ==================== GESTURES & TOUCH ====================
   drag_and_drop_lists: ^0.3.1
   flutter_zoom_drawer: ^3.2.0
-  interactive_viewer: ^0.0.5
   gesture_zoom_box: ^0.0.5
   two_dimensional_scrollables: ^0.0.4
   flutter_staggered_animations: ^1.1.0
@@ -61,7 +58,7 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   localstorage: ^5.0.0
 
-  # ==================== REMOTE ACCESS & NETWORKING ====================
+  # ==================== NETWORKING & REMOTE ACCESS ====================
   dio: ^5.7.0
   http: ^1.2.2
   web_socket_channel: ^3.0.1
@@ -69,10 +66,9 @@ dependencies:
   grpc: ^3.2.4
   protobuf: ^3.1.0
   ssh_client: ^2.1.0
-  telnet_client: ^0.2.0
   mqtt_client: ^10.3.0
 
-  # ==================== DEVICE CONTROL & ACCESS ====================
+  # ==================== DEVICE INFO & CONTROL ====================
   device_info_plus: ^11.1.0
   package_info_plus: ^8.1.0
   battery_plus: ^6.0.0
@@ -80,19 +76,12 @@ dependencies:
   volume_controller: ^2.0.7
   wifi_iot: ^0.3.0
   flutter_blue_plus: ^1.32.15
-  bluetooth_low_energy: ^0.6.0
   nfc_manager: ^3.7.0
   sensors_plus: ^6.1.1
   compass: ^2.0.0
-  gyroscope: ^0.1.0
-  proximity_sensor: ^1.0.1
-  light_sensor: ^2.0.0
-  barometer: ^2.0.0
-  thermistor: ^0.1.0
   pedometer: ^4.0.3
-  accelerometer: ^0.0.5
 
-  # ==================== APP ACCESS & CONTROL ====================
+  # ==================== APP INTERACTION ====================
   app_links: ^6.3.0
   url_launcher: ^6.3.1
   external_app_launcher: ^4.0.0
@@ -122,7 +111,6 @@ dependencies:
   image_editor_pro: ^2.0.0
   photofilters: ^1.0.8
   imgly_sdk: ^11.7.1
-  filter_lite: ^0.1.0
   photo_view: ^0.15.0
 
   # ==================== NOTIFICATIONS ====================
@@ -130,7 +118,6 @@ dependencies:
   firebase_messaging: ^15.1.6
   awesome_notifications: ^0.9.3+1
   flutter_inapp_notification: ^1.0.0
-  push: ^3.0.0
 
   # ==================== LOCATION & MAPS ====================
   geolocator: ^13.0.2
@@ -140,7 +127,7 @@ dependencies:
   flutter_map: ^7.0.2
   location: ^7.0.1
 
-  # ==================== FILE & STORAGE ====================
+  # ==================== FILE MANAGEMENT ====================
   file_picker: ^8.1.2
   open_file: ^3.4.0
   share_plus: ^10.1.0
@@ -149,27 +136,19 @@ dependencies:
   archive: ^3.6.1
   zip: ^3.0.0
 
-  # ==================== BIOMETRIC & SECURITY ====================
+  # ==================== SECURITY & BIOMETRICS ====================
   local_auth: ^2.3.0
   biometric_storage: ^5.0.0
   cryptography: ^2.7.0
   encrypt: ^5.0.3
   pointycastle: ^3.9.1
-  flutter_secure_keyboard: ^3.0.0
 
-  # ==================== SENSORS & PHYSICAL ====================
-  motion_sensors: ^0.1.0
-  heart_rate_monitor: ^0.0.2
-  fitness_tracker: ^1.0.0
-
-  # ==================== AUTOMATION & SCRIPTING ====================
+  # ==================== SCRIPTING (optional) ====================
   flutter_js: ^0.8.1
   lua_dardo: ^0.10.0
-  python_starter: ^0.2.1
 
   # ==================== UI UTILITIES ====================
   fluttertoast: ^8.2.8
-  sn_progress_dialog: ^1.1.0
   dropdown_button2: ^2.3.9
   shimmer: ^3.0.0
   cached_network_image: ^3.4.1
@@ -178,17 +157,16 @@ dependencies:
   connectivity_plus: ^6.1.0
   flutter_native_splash: ^2.4.1
   flutter_launcher_icons: ^0.14.1
-  flutter_windowmanager: ^0.3.0
   system_alert_window: ^1.0.0
   floating_bottom_navigation_bar: ^1.5.2
 
-  # ==================== CROSS-PLATFORM ====================
+  # ==================== WEB & CROSS-PLATFORM ====================
   universal_html: ^2.2.4
   universal_io: ^2.2.2
   webview_flutter: ^4.9.0
-  flutter_inappwebview: ^6.1.0   # ✅ درست نام
+  flutter_inappwebview: ^6.1.0
 
-  # ==================== FIREBASE ====================
+  # ==================== FIREBASE (full suite) ====================
   firebase_core: ^3.8.0
   firebase_auth: ^5.3.3
   firebase_storage: ^12.3.6
