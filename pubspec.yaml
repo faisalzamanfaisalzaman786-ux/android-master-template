@@ -4,14 +4,17 @@ version: 1.0.0+1
 publish_to: none
 
 environment:
-  sdk: ">=3.4.0 <4.0.0"
+  # 🔥 Changed from >=3.4.0 to >=3.5.0 to support permission_handler 11.4.0+
+  sdk: ">=3.5.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
+
+  # Core dependencies (updated to latest stable where safe)
   camera: ^0.11.1
   image_picker: ^1.1.2
-  permission_handler: ^11.0.0
+  permission_handler: ^11.3.1   # ✅ Works with SDK >=3.5.0, or keep ^11.0.0
   share_plus: ^10.1.0
   path_provider: ^2.1.5
   image: ^4.3.0
@@ -20,7 +23,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
+  flutter_lints: ^5.0.0   # upgraded from ^4.0.0 for better linting
 
 flutter:
   uses-material-design: true
