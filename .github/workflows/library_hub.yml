@@ -1,0 +1,66 @@
+name: Maintain Library Hub
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  update-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.29.2'
+          channel: 'stable'
+
+      - name: Create directory structure
+        run: mkdir -p library_hub/{packages,versions,backups,docs}
+
+      - name: Fetch latest core packages
+        run: |
+          set +e
+          PACKAGES=("camera" "image_picker" "permission_handler" "share_plus" "path_provider" "image" "flutter_local_notifications" "screen_share_plugin")
+          echo "[" > library_hub/packages/core.json
+          first=true
+          for pkg in "${PACKAGES[@]}"; do
+            version=$(curl -s "https://pub.dev/api/packages/$pkg" | jq -r '.latest.version')
+            if [ "$version" != "null" ] && [ -n "$version" ]; then
+              [ "$first" = true ] && first=false || echo "," >> library_hub/packages/core.json
+              echo "  { \"name\": \"$pkg\", \"latest_version\": \"$version\" }" >> library_hub/packages/core.json
+            else
+              echo "⚠️ $pkg not found" >> library_hub/versions/failed_checks.log
+            fi
+          done
+          echo "]" >> library_hub/packages/core.json
+
+      - name: Generate static permissions and sensors
+        run: |
+          cat > library_hub/packages/permissions.json << 'EOF'
+          [
+            {"permission":"android.permission.CAMERA","description":"کیمرہ","required_by":["camera"]},
+            {"permission":"android.permission.RECORD_AUDIO","description":"آواز","required_by":["microphone"]},
+            {"permission":"android.permission.READ_EXTERNAL_STORAGE","description":"اسٹوریج پڑھیں","required_by":["gallery"]},
+            {"permission":"android.permission.ACCESS_FINE_LOCATION","description":"لوکیشن","required_by":["maps"]}
+          ]
+          EOF
+          cat > library_hub/packages/sensors.json << 'EOF'
+          [
+            {"sensor":"accelerometer","permission":"none","description":"حرکت"},
+            {"sensor":"gyroscope","permission":"none","description":"گھماؤ"},
+            {"sensor":"heart_rate","permission":"android.permission.BODY_SENSORS","description":"دل کی دھڑکن"}
+          ]
+          EOF
+
+      - name: Save timestamp
+        run: date -u '+%Y-%m-%d %H:%M:%S UTC' > library_hub/versions/last_updated.txt
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add library_hub/
+          git diff --staged --quiet || git commit -m "🤖 Auto-update Library Hub"
+          git push
+        continue-on-error: true
