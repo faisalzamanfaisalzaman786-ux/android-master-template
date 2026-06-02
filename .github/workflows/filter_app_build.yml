@@ -13,7 +13,8 @@ jobs:
     if: github.event.action == 'filter_app_build'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Remove old/wrong directories
         run: |
@@ -21,17 +22,15 @@ jobs:
           rm -rf android/app 2>/dev/null || true
           mkdir -p lib android/app/src/main assets
 
-      # ✅ یہ نیا سٹیپ SDK constraint کو درست کرتا ہے
       - name: Fix Dart SDK constraint in pubspec.yaml
         run: |
           if [ ! -f "pubspec.yaml" ]; then
-            echo "❌ pubspec.yaml not found!"
+            echo "ERROR: pubspec.yaml not found"
             exit 1
           fi
-          # دونوں قسم کے quotes handle کرتا ہے
           sed -i 's/sdk: ">=3.5.0 <4.0.0"/sdk: ">=3.0.0 <4.0.0"/' pubspec.yaml
           sed -i "s/sdk: '>=3.5.0 <4.0.0'/sdk: '>=3.0.0 <4.0.0'/" pubspec.yaml
-          echo "✅ SDK constraint updated to >=3.0.0 <4.0.0"
+          echo "Fixed SDK constraint"
 
       - name: Decode main.dart
         run: echo '${{ github.event.client_payload.source_files.main_dart }}' | base64 -d > lib/main.dart
@@ -54,48 +53,49 @@ jobs:
           if [ -n "$ICON_B64" ] && [ "$ICON_B64" != "null" ]; then
             echo "$ICON_B64" | base64 -d > assets/icon.png
             echo "ICON_PROVIDED=true" >> $GITHUB_ENV
+          else
+            echo "ICON_PROVIDED=false" >> $GITHUB_ENV
           fi
 
       - name: Create default build.gradle if missing
         run: |
           if [ ! -f "android/app/build.gradle" ]; then
-            cat > android/app/build.gradle << 'EOF'
-def localProperties = new Properties()
-def localPropertiesFile = rootProject.file('local.properties')
-if (localPropertiesFile.exists()) {
-    localPropertiesFile.withReader('UTF-8') { reader ->
-        localProperties.load(reader)
-    }
-}
-def flutterRoot = localProperties.getProperty('flutter.sdk')
-if (flutterRoot == null) {
-    throw new GradleException("Flutter SDK not found.")
-}
-apply plugin: 'com.android.application'
-apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
-android {
-    compileSdkVersion 34
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
-    }
-    defaultConfig {
-        applicationId "com.example.temp"
-        minSdkVersion 21
-        targetSdkVersion 34
-        versionCode 1
-        versionName "1.0"
-    }
-    buildTypes {
-        release {
-            signingConfig signingConfigs.debug
-        }
-    }
-}
-flutter {
-    source '../..'
-}
-EOF
+            printf '%s\n' \
+              'def localProperties = new Properties()' \
+              'def localPropertiesFile = rootProject.file("local.properties")' \
+              'if (localPropertiesFile.exists()) {' \
+              '    localPropertiesFile.withReader("UTF-8") { reader ->' \
+              '        localProperties.load(reader)' \
+              '    }' \
+              '}' \
+              'def flutterRoot = localProperties.getProperty("flutter.sdk")' \
+              'if (flutterRoot == null) {' \
+              '    throw new GradleException("Flutter SDK not found.")' \
+              '}' \
+              'apply plugin: "com.android.application"' \
+              'apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"' \
+              'android {' \
+              '    compileSdkVersion 34' \
+              '    compileOptions {' \
+              '        sourceCompatibility JavaVersion.VERSION_17' \
+              '        targetCompatibility JavaVersion.VERSION_17' \
+              '    }' \
+              '    defaultConfig {' \
+              '        applicationId "com.example.temp"' \
+              '        minSdkVersion 21' \
+              '        targetSdkVersion 34' \
+              '        versionCode 1' \
+              '        versionName "1.0"' \
+              '    }' \
+              '    buildTypes {' \
+              '        release {' \
+              '            signingConfig signingConfigs.debug' \
+              '        }' \
+              '    }' \
+              '}' \
+              'flutter {' \
+              '    source "../.."' \
+              '}' > android/app/build.gradle
           fi
 
       - name: Update package name
@@ -113,6 +113,13 @@ EOF
           sed -i "s/minSdkVersion [0-9]\+/minSdkVersion $MIN_SDK/" android/app/build.gradle
           sed -i "s/targetSdkVersion [0-9]\+/targetSdkVersion $TARGET_SDK/" android/app/build.gradle
 
+      - name: Enable ProGuard if requested
+        if: env.USE_PROGUARD == 'true'
+        run: |
+          sed -i '/release {/a \
+                minifyEnabled true\
+                proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"' android/app/build.gradle
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -124,7 +131,8 @@ EOF
         with:
           path: ${{ env.PUB_CACHE_PATH }}
           key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
-          restore-keys: ${{ runner.os }}-pub-
+          restore-keys: |
+            ${{ runner.os }}-pub-
 
       - name: Pre-download dependencies
         run: |
@@ -151,7 +159,8 @@ EOF
     if: github.event.action == 'clean_cache'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v7
+      - name: Clear GitHub Actions cache
+        uses: actions/github-script@v7
         with:
           script: |
             const caches = await github.rest.actions.getActionsCacheList({
@@ -166,4 +175,5 @@ EOF
               });
               console.log(`Deleted cache: ${cache.key}`);
             }
-      - run: echo "Cache cleanup triggered"
+      - name: Log cleanup
+        run: echo "Cache cleanup triggered"
