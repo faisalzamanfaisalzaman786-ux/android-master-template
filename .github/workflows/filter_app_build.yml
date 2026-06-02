@@ -1,179 +1,129 @@
-name: Filter App Builder (Repair & Build)
+name: Setup Fixed Tools Repository
 
 on:
-  repository_dispatch:
-    types: [filter_app_build, clean_cache]
-
-env:
-  FLUTTER_VERSION: '3.19.6'
-  PUB_CACHE_PATH: ~/.pub-cache
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to store tools (e.g., main or tools)'
+        required: true
+        default: 'main'
 
 jobs:
   build:
-    if: github.event.action == 'filter_app_build'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout repository (with history)
         uses: actions/checkout@v4
-
-      - name: Remove old/wrong directories
-        run: |
-          rm -rf app
-          rm -rf android/app 2>/dev/null || true
-          mkdir -p lib android/app/src/main assets
-
-      - name: Fix Dart SDK constraint in pubspec.yaml
-        run: |
-          if [ ! -f "pubspec.yaml" ]; then
-            echo "ERROR: pubspec.yaml not found"
-            exit 1
-          fi
-          sed -i 's/sdk: ">=3.5.0 <4.0.0"/sdk: ">=3.0.0 <4.0.0"/' pubspec.yaml
-          sed -i "s/sdk: '>=3.5.0 <4.0.0'/sdk: '>=3.0.0 <4.0.0'/" pubspec.yaml
-          echo "Fixed SDK constraint"
-
-      - name: Decode main.dart
-        run: echo '${{ github.event.client_payload.source_files.main_dart }}' | base64 -d > lib/main.dart
-
-      - name: Decode AndroidManifest.xml
-        run: echo '${{ github.event.client_payload.source_files.android_manifest }}' | base64 -d > android/app/src/main/AndroidManifest.xml
-
-      - name: Set build config
-        run: |
-          echo "BUILD_TYPE=${{ github.event.client_payload.build_config.build_type }}" >> $GITHUB_ENV
-          echo "MIN_SDK=${{ github.event.client_payload.build_config.min_sdk }}" >> $GITHUB_ENV
-          echo "TARGET_SDK=${{ github.event.client_payload.build_config.target_sdk }}" >> $GITHUB_ENV
-          echo "PACKAGE_NAME=${{ github.event.client_payload.build_config.package_name }}" >> $GITHUB_ENV
-          echo "APP_NAME=${{ github.event.client_payload.build_config.app_display_name }}" >> $GITHUB_ENV
-          echo "USE_PROGUARD=${{ github.event.client_payload.build_config.use_proguard }}" >> $GITHUB_ENV
-
-      - name: Decode app icon
-        run: |
-          ICON_B64='${{ github.event.client_payload.assets.app_icon_base64 }}'
-          if [ -n "$ICON_B64" ] && [ "$ICON_B64" != "null" ]; then
-            echo "$ICON_B64" | base64 -d > assets/icon.png
-            echo "ICON_PROVIDED=true" >> $GITHUB_ENV
-          else
-            echo "ICON_PROVIDED=false" >> $GITHUB_ENV
-          fi
-
-      - name: Create default build.gradle if missing
-        run: |
-          if [ ! -f "android/app/build.gradle" ]; then
-            printf '%s\n' \
-              'def localProperties = new Properties()' \
-              'def localPropertiesFile = rootProject.file("local.properties")' \
-              'if (localPropertiesFile.exists()) {' \
-              '    localPropertiesFile.withReader("UTF-8") { reader ->' \
-              '        localProperties.load(reader)' \
-              '    }' \
-              '}' \
-              'def flutterRoot = localProperties.getProperty("flutter.sdk")' \
-              'if (flutterRoot == null) {' \
-              '    throw new GradleException("Flutter SDK not found.")' \
-              '}' \
-              'apply plugin: "com.android.application"' \
-              'apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"' \
-              'android {' \
-              '    compileSdkVersion 34' \
-              '    compileOptions {' \
-              '        sourceCompatibility JavaVersion.VERSION_17' \
-              '        targetCompatibility JavaVersion.VERSION_17' \
-              '    }' \
-              '    defaultConfig {' \
-              '        applicationId "com.example.temp"' \
-              '        minSdkVersion 21' \
-              '        targetSdkVersion 34' \
-              '        versionCode 1' \
-              '        versionName "1.0"' \
-              '    }' \
-              '    buildTypes {' \
-              '        release {' \
-              '            signingConfig signingConfigs.debug' \
-              '        }' \
-              '    }' \
-              '}' \
-              'flutter {' \
-              '    source "../.."' \
-              '}' > android/app/build.gradle
-          fi
-
-      - name: Update package name
-        run: |
-          sed -i "s/applicationId \".*\"/applicationId \"$PACKAGE_NAME\"/" android/app/build.gradle
-          sed -i "s/namespace \".*\"/namespace \"$PACKAGE_NAME\"/" android/app/build.gradle || true
-
-      - name: Update AndroidManifest
-        run: |
-          sed -i "s/package=\".*\"/package=\"$PACKAGE_NAME\"/" android/app/src/main/AndroidManifest.xml
-          sed -i "s/android:label=\".*\"/android:label=\"$APP_NAME\"/" android/app/src/main/AndroidManifest.xml
-
-      - name: Update minSdk and targetSdk
-        run: |
-          sed -i "s/minSdkVersion [0-9]\+/minSdkVersion $MIN_SDK/" android/app/build.gradle
-          sed -i "s/targetSdkVersion [0-9]\+/targetSdkVersion $TARGET_SDK/" android/app/build.gradle
-
-      - name: Enable ProGuard if requested
-        if: env.USE_PROGUARD == 'true'
-        run: |
-          sed -i '/release {/a \
-                minifyEnabled true\
-                proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"' android/app/build.gradle
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cache pub dependencies
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.PUB_CACHE_PATH }}
-          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-pub-
-
-      - name: Pre-download dependencies
+      - name: Configure Git user
         run: |
-          flutter pub get
-          flutter precache --all
-        continue-on-error: true
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Build APK
+      - name: Clean everything except .git and workflow files
         run: |
-          if [ "$BUILD_TYPE" = "release" ]; then
-            flutter build apk --release
-          else
-            flutter build apk --debug
-          fi
+          # Remove all files and folders except .git and .github/workflows
+          find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name '.github' -exec rm -rf {} \;
+          # Ensure .github/workflows exists
+          mkdir -p .github/workflows
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-${{ env.BUILD_TYPE }}
-          path: build/app/outputs/flutter-apk/*.apk
-          retention-days: 7
+      - name: Create tool directories
+        run: |
+          mkdir -p flutter android-sdk jdk gradle
+          echo "Directories created."
 
-  clean-cache:
-    if: github.event.action == 'clean_cache'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Clear GitHub Actions cache
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const caches = await github.rest.actions.getActionsCacheList({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-            });
-            for (const cache of caches.data.actions_caches) {
-              await github.rest.actions.deleteActionsCacheById({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                cache_id: cache.id,
-              });
-              console.log(`Deleted cache: ${cache.key}`);
-            }
-      - name: Log cleanup
-        run: echo "Cache cleanup triggered"
+      # ========== 1. Download and extract Flutter SDK (Fixed version: 3.38.4) ==========
+      - name: Download Flutter SDK
+        run: |
+          curl -L -o flutter.tar.xz https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.38.4-stable.tar.xz
+          tar -xf flutter.tar.xz -C flutter --strip-components=1
+          rm flutter.tar.xz
+          echo "Flutter 3.38.4 extracted."
+
+      # ========== 2. Download and extract Android SDK Command Line Tools (Fixed version: 11076708) ==========
+      - name: Download Android SDK Command Line Tools
+        run: |
+          curl -L -o cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          mkdir -p android-sdk/cmdline-tools
+          unzip -q cmdline-tools.zip -d android-sdk/cmdline-tools
+          mv android-sdk/cmdline-tools/cmdline-tools android-sdk/cmdline-tools/latest
+          rm cmdline-tools.zip
+          # Accept licenses automatically (optional but good)
+          yes | android-sdk/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          # Install required platform and build tools
+          android-sdk/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0" > /dev/null
+          echo "Android SDK (API 34, build-tools 34.0.0) installed."
+
+      # ========== 3. Download and extract JDK 17 (Fixed: Temurin 17.0.10+7) ==========
+      - name: Download JDK 17
+        run: |
+          curl -L -o jdk.tar.gz https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.10%2B7/OpenJDK17U-jdk_x64_linux_hotspot_17.0.10_7.tar.gz
+          mkdir -p jdk
+          tar -xzf jdk.tar.gz -C jdk --strip-components=1
+          rm jdk.tar.gz
+          echo "JDK 17.0.10+7 extracted."
+
+      # ========== 4. (Optional) Download Gradle fixed version ==========
+      - name: Download Gradle 8.6
+        run: |
+          curl -L -o gradle.zip https://services.gradle.org/distributions/gradle-8.6-bin.zip
+          unzip -q gradle.zip -d gradle
+          mv gradle/gradle-8.6/* gradle/
+          rmdir gradle/gradle-8.6
+          rm gradle.zip
+          echo "Gradle 8.6 extracted."
+
+      # ========== 5. Create a version manifest file ==========
+      - name: Create versions.json
+        run: |
+          cat > versions.json << EOF
+          {
+            "flutter": "3.38.4",
+            "android_sdk": {
+              "cmdline_tools": "11076708",
+              "platform": "android-34",
+              "build_tools": "34.0.0"
+            },
+            "jdk": "17.0.10+7",
+            "gradle": "8.6"
+          }
+          EOF
+          echo "versions.json created."
+
+      # ========== 6. Optionally create a sample pubspec.yaml with fixed dependencies ==========
+      - name: Create fixed pubspec.yaml
+        run: |
+          cat > pubspec.yaml << EOF
+          name: fixed_build_environment
+          description: Fixed dependencies for offline APK building
+          version: 1.0.0
+          environment:
+            sdk: ">=3.0.0 <4.0.0"
+          dependencies:
+            flutter:
+              sdk: flutter
+            camera: 0.11.0
+            image_picker: 1.1.0
+            permission_handler: 11.3.1
+            image: 4.3.0
+            path_provider: 2.1.5
+            share_plus: 10.1.0
+            gal: 2.3.0
+          dev_dependencies:
+            flutter_test:
+              sdk: flutter
+            flutter_lints: 5.0.0
+          flutter:
+            uses-material-design: true
+          EOF
+          echo "Fixed pubspec.yaml created."
+
+      # ========== 7. Commit and push all tools to the repository ==========
+      - name: Commit and push changes
+        run: |
+          git add .
+          git commit -m "Add fixed build tools: Flutter 3.38.4, Android SDK API 34, JDK 17.0.10, Gradle 8.6, fixed pubspec.yaml"
+          git push origin ${{ github.event.inputs.branch }}
