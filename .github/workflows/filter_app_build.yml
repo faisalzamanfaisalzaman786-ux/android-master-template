@@ -5,7 +5,7 @@ on:
     types: [filter_app_build, clean_cache]
 
 env:
-  FLUTTER_VERSION: '3.22.4'
+  FLUTTER_VERSION: '3.19.6'
   PUB_CACHE_PATH: ~/.pub-cache
 
 jobs:
@@ -16,24 +16,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Repair: remove wrong structure
+      # ---------- STEP 1: Repair - remove wrong structure ----------
       - name: Remove old/wrong directories
         run: |
           rm -rf app
-          rm -rf android/app
+          rm -rf android/app 2>/dev/null || true
           mkdir -p lib android/app/src/main assets
-          echo "Cleanup done."
+          echo "✅ Cleanup done. Correct directories created."
 
-      # Ensure fixed pubspec.yaml exists
+      # ---------- STEP 2: Verify fixed pubspec.yaml ----------
       - name: Verify fixed pubspec.yaml
         run: |
           if [ ! -f "pubspec.yaml" ]; then
-            echo "ERROR: No pubspec.yaml found in root"
+            echo "❌ ERROR: No pubspec.yaml found in root. Please add a fixed pubspec.yaml to your repository."
             exit 1
           fi
-          echo "Using fixed pubspec.yaml from repository"
+          echo "✅ Using fixed pubspec.yaml from repository (UI version ignored)"
 
-      # Decode files from UI
+      # ---------- STEP 3: Decode source files from UI ----------
       - name: Decode main.dart
         run: |
           echo '${{ github.event.client_payload.source_files.main_dart }}' | base64 -d > lib/main.dart
@@ -42,7 +42,7 @@ jobs:
         run: |
           echo '${{ github.event.client_payload.source_files.android_manifest }}' | base64 -d > android/app/src/main/AndroidManifest.xml
 
-      - name: Set build config
+      - name: Set build config environment variables
         run: |
           echo "BUILD_TYPE=${{ github.event.client_payload.build_config.build_type }}" >> $GITHUB_ENV
           echo "MIN_SDK=${{ github.event.client_payload.build_config.min_sdk }}" >> $GITHUB_ENV
@@ -51,7 +51,7 @@ jobs:
           echo "APP_NAME=${{ github.event.client_payload.build_config.app_display_name }}" >> $GITHUB_ENV
           echo "USE_PROGUARD=${{ github.event.client_payload.build_config.use_proguard }}" >> $GITHUB_ENV
 
-      - name: Decode app icon
+      - name: Decode app icon (if provided)
         run: |
           ICON_B64='${{ github.event.client_payload.assets.app_icon_base64 }}'
           if [ -n "$ICON_B64" ] && [ "$ICON_B64" != "null" ]; then
@@ -61,7 +61,7 @@ jobs:
             echo "ICON_PROVIDED=false" >> $GITHUB_ENV
           fi
 
-      # Create default build.gradle if missing
+      # ---------- STEP 4: Create default build.gradle if missing ----------
       - name: Create default build.gradle
         run: |
           if [ ! -f "android/app/build.gradle" ]; then
@@ -113,25 +113,26 @@ jobs:
           sed -i "s/package=\".*\"/package=\"$PACKAGE_NAME\"/" android/app/src/main/AndroidManifest.xml
           sed -i "s/android:label=\".*\"/android:label=\"$APP_NAME\"/" android/app/src/main/AndroidManifest.xml
 
-      - name: Update minSdk and targetSdk
+      - name: Update minSdk and targetSdk in build.gradle
         run: |
           sed -i "s/minSdkVersion [0-9]\+/minSdkVersion $MIN_SDK/" android/app/build.gradle
           sed -i "s/targetSdkVersion [0-9]\+/targetSdkVersion $TARGET_SDK/" android/app/build.gradle
 
-      - name: Enable ProGuard if requested
+      - name: Enable ProGuard / R8 if requested
         if: env.USE_PROGUARD == 'true'
         run: |
           sed -i '/release {/a \
                 minifyEnabled true\
                 proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"' android/app/build.gradle
 
+      # ---------- STEP 5: Setup Flutter with fixed version ----------
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      - name: Cache pub dependencies
+      - name: Cache Flutter pub dependencies
         uses: actions/cache@v4
         with:
           path: ${{ env.PUB_CACHE_PATH }}
@@ -139,13 +140,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pub-
 
-      - name: Pre-download dependencies
+      - name: Pre-download dependencies (offline preparation)
         run: |
           flutter pub get
           flutter precache --all
         continue-on-error: true
 
-      - name: Build APK offline
+      - name: Build APK (offline mode)
         run: |
           if [ "$BUILD_TYPE" = "release" ]; then
             flutter build apk --release --offline
@@ -160,6 +161,7 @@ jobs:
           path: build/app/outputs/flutter-apk/*.apk
           retention-days: 7
 
+  # ---------- Clean cache job ----------
   clean-cache:
     if: github.event.action == 'clean_cache'
     runs-on: ubuntu-latest
@@ -181,4 +183,4 @@ jobs:
               console.log(`Deleted cache: ${cache.key}`);
             }
       - name: Log cleanup
-        run: echo "Cache cleanup triggered"
+        run: echo "Cache cleanup triggered by UI"
