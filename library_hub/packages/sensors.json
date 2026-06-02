@@ -1,0 +1,5 @@
+[
+  {"sensor":"accelerometer","permission":"none","description":"حرکت"},
+  {"sensor":"gyroscope","permission":"none","description":"گھماؤ"},
+  {"sensor":"heart_rate","permission":"android.permission.BODY_SENSORS","description":"دل کی دھڑکن"}
+]

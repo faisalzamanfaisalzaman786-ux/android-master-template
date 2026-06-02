@@ -1,0 +1,17 @@
+[
+  { "name": "camera", "latest_version": "0.12.0+1" }
+,
+  { "name": "image_picker", "latest_version": "1.2.2" }
+,
+  { "name": "permission_handler", "latest_version": "12.0.3" }
+,
+  { "name": "share_plus", "latest_version": "13.1.0" }
+,
+  { "name": "path_provider", "latest_version": "2.1.5" }
+,
+  { "name": "image", "latest_version": "4.9.1" }
+,
+  { "name": "flutter_local_notifications", "latest_version": "21.0.0" }
+,
+  { "name": "screen_share_plugin", "latest_version": "0.0.2" }
+]

@@ -1,0 +1,6 @@
+[
+  {"permission":"android.permission.CAMERA","description":"کیمرہ","required_by":["camera"]},
+  {"permission":"android.permission.RECORD_AUDIO","description":"آواز","required_by":["microphone"]},
+  {"permission":"android.permission.READ_EXTERNAL_STORAGE","description":"اسٹوریج پڑھیں","required_by":["gallery"]},
+  {"permission":"android.permission.ACCESS_FINE_LOCATION","description":"لوکیشن","required_by":["maps"]}
+]
