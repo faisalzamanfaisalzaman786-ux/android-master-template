@@ -1,4 +1,5 @@
-name: Filter App Builder (Stable with Version Locking)
+name: Filter App Builder (Optimized Caching)
+
 on:
   repository_dispatch:
     types: [filter_app_build]
@@ -16,14 +17,13 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # ---------- Use a FIXED stable Flutter version (not latest) ----------
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.4'   # ✅ مستحکم ورژن، breaking changes سے بچنے کے لیے
+          flutter-version: '3.35.0'
           channel: 'stable'
-          cache: true
+          cache: true  # Already caches Flutter SDK
 
-      # ---------- Cache Gradle and Pub with lock file ----------
+      # ---------- Cache Gradle and Pub ----------
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -31,17 +31,15 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: ${{ runner.os }}-gradle-
-
-      - name: Cache Pub (using pubspec.lock for exact versions)
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+      - name: Cache Pub
         uses: actions/cache@v4
         with:
           path: ${{ env.PUB_CACHE }}
-          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pub-
-            ${{ runner.os }}-pub-${{ hashFiles('pubspec.yaml') }}
-
       - name: Save payload
         run: echo '${{ toJson(github.event.client_payload) }}' > payload.json
 
@@ -51,8 +49,6 @@ jobs:
           APP_NAME=$(jq -r '.build_config.app_display_name // "Filter App"' payload.json)
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
           echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
-
-      # ---------- Create fresh Flutter project structure ----------
       - name: Create fresh Flutter project
         run: |
           PKG="${{ env.PACKAGE_NAME }}"
@@ -60,61 +56,62 @@ jobs:
           PROJ=$(echo "$PKG" | rev | cut -d. -f1 | rev | tr '-' '_' | sed 's/^[0-9]/_&/')
           rm -rf android ios .dart_tool build
           flutter create --org "$ORG" --project-name "$PROJ" --platforms=android .
-
-      # ---------- Write main.dart from payload ----------
       - name: Write main.dart
         run: |
           MAIN_B64=$(jq -r '.source_files.main_dart // ""' payload.json)
           [ -z "$MAIN_B64" ] || [ "$MAIN_B64" = "null" ] && echo "❌ No main.dart" && exit 1
           echo "$MAIN_B64" | base64 -d > lib/main.dart
-
-      # ---------- Write raw AndroidManifest.xml ----------
       - name: Write raw AndroidManifest.xml
         run: |
           MANIFEST_B64=$(jq -r '.source_files.android_manifest // ""' payload.json)
           [ -z "$MANIFEST_B64" ] || [ "$MANIFEST_B64" = "null" ] && echo "❌ No manifest" && exit 1
           mkdir -p android/app/src/main
-          echo "$MANIFEST_B64" | base64 -d > android/app/src/main/AndroidManifest.xml
-
-      # ---------- 🔥 IMPROVED: Process pubspec.yaml safely ----------
-      - name: Process pubspec.yaml (auto-fix 'any' to compatible versions)
+          echo "$MANIFEST_B64" | base64 -d > android/app/src/main/AndroidManifest.xml.raw
+      - name: Write raw pubspec.yaml
         run: |
           PUBSPEC_B64=$(jq -r '.source_files.pubspec_yaml // ""' payload.json)
-          if [ -z "$PUBSPEC_B64" ] || [ "$PUBSPEC_B64" = "null" ]; then
-            echo "❌ No pubspec.yaml in payload"
-            exit 1
+          if [ -n "$PUBSPEC_B64" ] && [ "$PUBSPEC_B64" != "null" ]; then
+            echo "$PUBSPEC_B64" | base64 -d > pubspec.yaml.raw
+          else
+            echo "❌ No pubspec.yaml in payload" && exit 1
           fi
-          echo "$PUBSPEC_B64" | base64 -d > pubspec.yaml.orig
-          
-          # We'll keep original but replace "any" with "^" version using current latest
-          # First, get current latest compatible versions from pub.dev
-          cp pubspec.yaml.orig pubspec.yaml
-          
-          # Extract dependencies section and find lines with ": any"
-          grep -E '^[ ]+[a-zA-Z_][a-zA-Z0-9_]*: any' pubspec.yaml | while read line; do
+      # ---------- Clean pubspec.yaml ----------
+      - name: Create clean pubspec.yaml
+        run: |
+          cat > pubspec.yaml <<'EOF'
+          name: filter_app
+          description: Auto-generated Flutter app
+          version: 1.0.0+1
+          publish_to: none
+          environment:
+            sdk: ">=3.0.0 <4.0.0"
+          dependencies:
+            flutter:
+              sdk: flutter
+          dev_dependencies:
+            flutter_test:
+              sdk: flutter
+            flutter_lints: any
+          flutter:
+            uses-material-design: true
+          EOF
+          grep -E '^[ ]+[a-zA-Z_][a-zA-Z0-9_]*:' pubspec.yaml.raw | while read line; do
             pkg=$(echo "$line" | cut -d: -f1 | xargs)
-            echo "Fixing package: $pkg"
-            # Query pub.dev for latest stable version
-            latest=$(curl -s "https://pub.dev/api/packages/$pkg" | jq -r '.versions[-1].version // ""')
-            if [ -n "$latest" ]; then
-              # Replace "any" with "^$latest" (caret allows patch updates only)
-              sed -i "s/$pkg: any/$pkg: ^$latest/" pubspec.yaml
-            else
-              # Fallback: use a safe range
-              sed -i "s/$pkg: any/$pkg: any/" pubspec.yaml
+            if [[ "$pkg" == "flutter" ]] || [[ "$pkg" == "flutter_test" ]] || [[ "$pkg" == "cupertino_icons" ]]; then
+              continue
+            fi
+            if ! grep -q "^[ ]*$pkg:" pubspec.yaml; then
+              sed -i "/^dependencies:/a\  $pkg: any" pubspec.yaml
             fi
           done
-          
-          # Also fix any direct "any" under dev_dependencies
-          sed -i 's/: any/: any/' pubspec.yaml   # temporary, but above loop handles it
-          
-          echo "✅ pubspec.yaml processed:"
-          cat pubspec.yaml
-
-      # ---------- Auto-fix Android permissions (same as before) ----------
+      # ---------- Auto-fix permissions ----------
       - name: Auto-fix Android permissions
         run: |
-          REQUIRED_PERMS=("android.permission.INTERNET" "android.permission.ACCESS_NETWORK_STATE")
+          cp android/app/src/main/AndroidManifest.xml.raw android/app/src/main/AndroidManifest.xml
+          REQUIRED_PERMS=(
+            "android.permission.INTERNET"
+            "android.permission.ACCESS_NETWORK_STATE"
+          )
           if grep -qi "camera" lib/main.dart; then
             REQUIRED_PERMS+=("android.permission.CAMERA")
           fi
@@ -135,15 +132,11 @@ jobs:
           fi
           for perm in "${REQUIRED_PERMS[@]}"; do
             if ! grep -q "<uses-permission android:name=\"$perm\"" android/app/src/main/AndroidManifest.xml; then
-              sed -i "s|</manifest>| <uses-permission android:name=\"$perm\" />\n</manifest>|" android/app/src/main/AndroidManifest.xml
+              sed -i "s|</manifest>|    <uses-permission android:name=\"$perm\" />\n</manifest>|" android/app/src/main/AndroidManifest.xml
             fi
           done
-
-      # ---------- Get dependencies with lock file (exact versions) ----------
-      - name: Get dependencies and generate lock file
-        run: |
-          flutter pub get
-          # Lock file now contains exact versions, cache will use it next time
+      - name: Get dependencies (cached)
+        run: flutter pub get
 
       - name: Create assets folder
         run: mkdir -p assets
@@ -154,7 +147,6 @@ jobs:
           if [ -n "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" ]; then
             echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 -d > android/app/release-keystore.jks
           fi
-
       - name: Create key.properties
         run: |
           if [ -f "android/app/release-keystore.jks" ]; then
@@ -163,153 +155,73 @@ jobs:
             printf "keyAlias=${{ secrets.SIGNING_KEY_ALIAS }}\n" >> android/key.properties
             printf "storeFile=release-keystore.jks\n" >> android/key.properties
           fi
-
-      - name: Write top-level build.gradle (standard)
+      - name: Write top-level build.gradle
         run: |
-          cat > android/build.gradle <<'EOF'
-          buildscript {
-              ext.kotlin_version = "1.9.0"
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-              dependencies {
-                  classpath "com.android.tools.build:gradle:7.3.0"
-                  classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-              }
-          }
-          allprojects {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          rootProject.buildDir = "../build"
-          subprojects {
-              project.buildDir = "${rootProject.buildDir}/${project.name}"
-          }
-          subprojects {
-              project.evaluationDependsOn(":app")
-          }
-          tasks.register("clean", Delete) {
-              delete rootProject.buildDir
-          }
-          EOF
-
-      - name: Write app/build.gradle (minSdk 24, namespace from env)
+          printf '%s\n' \
+            'buildscript {' \
+            '    ext.kotlin_version = "1.9.0"' \
+            '    repositories { google(); mavenCentral() }' \
+            '    dependencies {' \
+            '        classpath "com.android.tools.build:gradle:7.3.0"' \
+            '        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"' \
+            '    }' \
+            '}' \
+            'allprojects { repositories { google(); mavenCentral() } }' \
+            'rootProject.buildDir = "../build"' \
+            'subprojects { project.buildDir = "${rootProject.buildDir}/${project.name}" }' \
+            'subprojects { project.evaluationDependsOn(":app") }' \
+            'tasks.register("clean", Delete) { delete rootProject.buildDir }' \
+            > android/build.gradle
+      - name: Write app/build.gradle (minSdk 24)
         run: |
           if [ -f "android/key.properties" ]; then
-            cat > android/app/build.gradle <<EOF
-          plugins {
-              id "com.android.application"
-              id "kotlin-android"
-              id "dev.flutter.flutter-gradle-plugin"
-          }
-          def keystoreProperties = new Properties()
-          def keystorePropertiesFile = rootProject.file("key.properties")
-          if (keystorePropertiesFile.exists()) {
-              keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-          }
-          android {
-              namespace "${{ env.PACKAGE_NAME }}"
-              compileSdk = 36
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-              defaultConfig {
-                  applicationId "${{ env.PACKAGE_NAME }}"
-                  minSdk = 24
-                  targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0"
-              }
-              signingConfigs {
-                  release {
-                      keyAlias keystoreProperties["keyAlias"]
-                      keyPassword keystoreProperties["keyPassword"]
-                      storeFile file(keystoreProperties["storeFile"] ?: "release-keystore.jks")
-                      storePassword keystoreProperties["storePassword"]
-                  }
-              }
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.release
-                      minifyEnabled false
-                      shrinkResources false
-                  }
-              }
-          }
-          flutter {
-              source = "../.."
-          }
-          EOF
+            printf '%s\n' \
+              'plugins { id "com.android.application"; id "kotlin-android"; id "dev.flutter.flutter-gradle-plugin" }' \
+              'def keystoreProperties = new Properties()' \
+              'def keystorePropertiesFile = rootProject.file("key.properties")' \
+              'if (keystorePropertiesFile.exists()) { keystoreProperties.load(new FileInputStream(keystorePropertiesFile)) }' \
+              'android {' \
+              '    namespace "'${{ env.PACKAGE_NAME }}'"' \
+              '    compileSdk = 36' \
+              '    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }' \
+              '    kotlinOptions { jvmTarget = "17" }' \
+              '    defaultConfig { applicationId "'${{ env.PACKAGE_NAME }}'"; minSdk = 24; targetSdk = 34; versionCode = 1; versionName = "1.0" }' \
+              '    signingConfigs { release { keyAlias keystoreProperties["keyAlias"]; keyPassword keystoreProperties["keyPassword"]; storeFile file(keystoreProperties["storeFile"] ?: "release-keystore.jks"); storePassword keystoreProperties["storePassword"] } }' \
+              '    buildTypes { release { signingConfig signingConfigs.release; minifyEnabled false; shrinkResources false } }' \
+              '}' \
+              'flutter { source = "../.." }' \
+              > android/app/build.gradle
           else
-            cat > android/app/build.gradle <<EOF
-          plugins {
-              id "com.android.application"
-              id "kotlin-android"
-              id "dev.flutter.flutter-gradle-plugin"
-          }
-          android {
-              namespace "${{ env.PACKAGE_NAME }}"
-              compileSdk = 36
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-              defaultConfig {
-                  applicationId "${{ env.PACKAGE_NAME }}"
-                  minSdk = 24
-                  targetSdk = 34
-                  versionCode = 1
-                  versionName = "1.0"
-              }
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.debug
-                      minifyEnabled false
-                      shrinkResources false
-                  }
-              }
-          }
-          flutter {
-              source = "../.."
-          }
-          EOF
+            printf '%s\n' \
+              'plugins { id "com.android.application"; id "kotlin-android"; id "dev.flutter.flutter-gradle-plugin" }' \
+              'android {' \
+              '    namespace "'${{ env.PACKAGE_NAME }}'"' \
+              '    compileSdk = 36' \
+              '    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }' \
+              '    kotlinOptions { jvmTarget = "17" }' \
+              '    defaultConfig { applicationId "'${{ env.PACKAGE_NAME }}'"; minSdk = 24; targetSdk = 34; versionCode = 1; versionName = "1.0" }' \
+              '    buildTypes { release { signingConfig signingConfigs.debug; minifyEnabled false; shrinkResources false } }' \
+              '}' \
+              'flutter { source = "../.." }' \
+              > android/app/build.gradle
           fi
-
-      - name: Update app name in manifest
+      - name: Update app name
         run: |
           sed -i "s/android:label=\".*\"/android:label=\"${{ env.APP_NAME }}\"/" android/app/src/main/AndroidManifest.xml
-
-      - name: Install ImageMagick
+      - name: Install ImageMagick (cached via apt)
         run: sudo apt-get update && sudo apt-get install -y imagemagick
 
-      - name: Apply custom icon (if provided)
+      - name: Apply custom icon
         run: |
           ICON_B64=$(jq -r '.assets.app_icon_base64 // ""' payload.json)
           if [ -n "$ICON_B64" ] && [ "$ICON_B64" != "null" ]; then
             echo "$ICON_B64" | base64 -d > /tmp/icon_raw.png
             for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-              case $density in
-                mdpi) size=48 ;;
-                hdpi) size=72 ;;
-                xhdpi) size=96 ;;
-                xxhdpi) size=144 ;;
-                xxxhdpi) size=192 ;;
-              esac
+              case $density in mdpi) size=48;; hdpi) size=72;; xhdpi) size=96;; xxhdpi) size=144;; xxxhdpi) size=192;; esac
               mkdir -p android/app/src/main/res/mipmap-$density
               convert /tmp/icon_raw.png -resize ${size}x${size} android/app/src/main/res/mipmap-$density/ic_launcher.png
             done
           fi
-
       - name: Build release APK
         run: flutter build apk --release
 
