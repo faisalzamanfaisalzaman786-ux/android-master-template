@@ -1,16 +1,20 @@
-name: Filter App Builder (Auto Project Creator)
+name: One-time Flutter Project Structure Creator
 
 on:
-  repository_dispatch:
-    types: [filter_app_build]   # یہ وہی event ہے جو UI بھیجتا ہے
+  workflow_dispatch:    # صرف مینولی رن کے لیے
+
+permissions:
+  contents: write       # تاکہ یہ ریپازٹری میں فائلیں push کر سکے
 
 jobs:
-  build:
+  create-structure:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -18,81 +22,24 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Flutter
+      - name: Setup Flutter (fixed version)
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.0'
+          flutter-version: '3.24.0'
           channel: 'stable'
-          cache: true
 
-      # 📁 1. ایک نیا Flutter پروجیکٹ جنریٹ کریں (پورا سٹرکچر)
-      - name: Create Flutter project structure
+      - name: Create Flutter project (overwrite if exists)
         run: |
-          flutter create --platforms=android --project-name=auto_filter_app --org=com.filter ./temp_project
-          cp -r temp_project/. .
-          cp -r temp_project/.gitignore .
-          rm -rf temp_project
+          # اگر پہلے سے کوئی پرانی فائلیں ہیں تو ہٹا دیں (صاف سلیٹ)
+          rm -rf .dart_tool .packages pubspec.lock android ios lib test
+          # نیا Flutter پروجیکٹ بنائیں
+          flutter create --platforms=android --project-name=my_app --org=com.example .
+          # pubspec.lock کو بھی محفوظ کر لیں (dependencies freeze)
+          git add .
 
-      # 📄 2. بھیجی گئی main.dart کو lib/main.dart میں ڈالیں
-      - name: Decode and place main.dart
+      - name: Commit and push the generated structure
         run: |
-          echo '${{ github.event.client_payload.source_files.main_dart }}' | base64 -d > lib/main.dart
-
-      # 📄 3. بھیجی گئی AndroidManifest.xml کو صحیح جگہ رکھیں
-      - name: Decode and place AndroidManifest.xml
-        run: |
-          mkdir -p android/app/src/main
-          echo '${{ github.event.client_payload.source_files.android_manifest }}' | base64 -d > android/app/src/main/AndroidManifest.xml
-
-      # 📄 4. بھیجی گئی pubspec.yaml کو جڑ میں رکھیں
-      - name: Decode and place pubspec.yaml
-        run: |
-          echo '${{ github.event.client_payload.source_files.pubspec_yaml }}' | base64 -d > pubspec.yaml
-
-      # 🖼️ 5. اگر icon بھیجا گیا ہو تو اسے لگائیں
-      - name: Decode and set app icon
-        run: |
-          ICON_BASE64="${{ github.event.client_payload.assets.app_icon_base64 }}"
-          if [ -n "$ICON_BASE64" ]; then
-            echo "$ICON_BASE64" | base64 -d > /tmp/icon.png
-            # Flutter کے لیے Android icons بنانے کا آسان طریقہ (فوری)
-            mkdir -p android/app/src/main/res/mipmap-hdpi
-            mkdir -p android/app/src/main/res/mipmap-mdpi
-            mkdir -p android/app/src/main/res/mipmap-xhdpi
-            mkdir -p android/app/src/main/res/mipmap-xxhdpi
-            mkdir -p android/app/src/main/res/mipmap-xxxhdpi
-            # تبدیل کرنے کی بجائے ایک ہی تصویر کو کاپی کر دیں (مکمل حل کے لیے imagemagick لگے گا، لیکن یہ بیس لائن ہے)
-            cp /tmp/icon.png android/app/src/main/res/mipmap-hdpi/ic_launcher.png
-            cp /tmp/icon.png android/app/src/main/res/mipmap-mdpi/ic_launcher.png
-            cp /tmp/icon.png android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
-            cp /tmp/icon.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-            cp /tmp/icon.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-          fi
-
-      # 📦 6. پیکیج نام اور ایپ کا نام manifest میں سیٹ کریں (اگر مختلف ہو)
-      - name: Update package name and app label
-        run: |
-          PACKAGE="${{ github.event.client_payload.build_config.package_name }}"
-          APP_NAME="${{ github.event.client_payload.build_config.app_display_name }}"
-          if [ -n "$PACKAGE" ]; then
-            # Android package name بدلنا (sed کے ذریعے)
-            sed -i "s/package=\"com\.filter\.auto_filter_app\"/package=\"$PACKAGE\"/g" android/app/src/main/AndroidManifest.xml
-          fi
-          if [ -n "$APP_NAME" ]; then
-            sed -i "s/android:label=\"auto_filter_app\"/android:label=\"$APP_NAME\"/g" android/app/src/main/AndroidManifest.xml
-          fi
-
-      # 🔧 7. dependencies انسٹال کریں
-      - name: Install dependencies
-        run: flutter pub get
-
-      # 🚀 8. APK بنائیں
-      - name: Build APK
-        run: flutter build apk --release
-
-      # 📤 9. APK کو artifact کے طور پر اپ لوڈ کریں
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: filter-app-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: add Flutter project structure (one-time setup)" || echo "No changes to commit"
+          git push
