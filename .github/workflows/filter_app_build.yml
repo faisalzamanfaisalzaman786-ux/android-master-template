@@ -2,38 +2,132 @@ name: Filter App Builder
 
 on:
   repository_dispatch:
-    types: [filter_app_build]
+    types: [filter_app_build, clean_cache]
+
+env:
+  FLUTTER_VERSION: '3.22.4'          # Fixed Flutter version
+  JAVA_VERSION: '17'
+  PUB_CACHE_PATH: ~/.pub-cache
 
 jobs:
   build:
+    if: github.event.action == 'filter_app_build'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '17'
-      
-      - name: Setup Flutter
+      - name: Checkout repository (template with fixed pubspec.yaml)
+        uses: actions/checkout@v4
+
+      # ---------- Decode UI inputs ----------
+      - name: Decode source files
+        run: |
+          mkdir -p app/lib app/android/app/src/main
+          echo '${{ github.event.client_payload.source_files.main_dart }}' | base64 -d > app/lib/main.dart
+          echo '${{ github.event.client_payload.source_files.android_manifest }}' | base64 -d > app/android/app/src/main/AndroidManifest.xml
+          # UI ka pubspec.yaml IGNORE kiya ja raha hai - hum fixed pubspec.yaml use karein ge
+          echo "UI pubspec.yaml ignored. Using fixed pubspec from repository."
+
+      - name: Set build config environment variables
+        run: |
+          echo "BUILD_TYPE=${{ github.event.client_payload.build_config.build_type }}" >> $GITHUB_ENV
+          echo "MIN_SDK=${{ github.event.client_payload.build_config.min_sdk }}" >> $GITHUB_ENV
+          echo "TARGET_SDK=${{ github.event.client_payload.build_config.target_sdk }}" >> $GITHUB_ENV
+          echo "PACKAGE_NAME=${{ github.event.client_payload.build_config.package_name }}" >> $GITHUB_ENV
+          echo "APP_NAME=${{ github.event.client_payload.build_config.app_display_name }}" >> $GITHUB_ENV
+          echo "USE_PROGUARD=${{ github.event.client_payload.build_config.use_proguard }}" >> $GITHUB_ENV
+
+      - name: Decode app icon (if provided)
+        run: |
+          ICON_B64='${{ github.event.client_payload.assets.app_icon_base64 }}'
+          if [ -n "$ICON_B64" ] && [ "$ICON_B64" != "null" ]; then
+            echo "$ICON_B64" | base64 -d > app_icon.png
+            mkdir -p app/assets
+            cp app_icon.png app/assets/icon.png
+            echo "ICON_PROVIDED=true" >> $GITHUB_ENV
+          else
+            echo "ICON_PROVIDED=false" >> $GITHUB_ENV
+          fi
+
+      # ---------- Apply dynamic package name & app name ----------
+      - name: Update Android package name (build.gradle)
+        run: |
+          sed -i "s/applicationId \".*\"/applicationId \"$PACKAGE_NAME\"/" app/android/app/build.gradle
+          # Update namespace if present (AGP 7+)
+          sed -i "s/namespace \".*\"/namespace \"$PACKAGE_NAME\"/" app/android/app/build.gradle || true
+
+      - name: Update AndroidManifest with package name and app name
+        run: |
+          sed -i "s/package=\".*\"/package=\"$PACKAGE_NAME\"/" app/android/app/src/main/AndroidManifest.xml
+          sed -i "s/android:label=\".*\"/android:label=\"$APP_NAME\"/" app/android/app/src/main/AndroidManifest.xml
+
+      - name: Update minSdk / targetSdk in build.gradle
+        run: |
+          sed -i "s/minSdkVersion [0-9]\+/minSdkVersion $MIN_SDK/" app/android/app/build.gradle
+          sed -i "s/targetSdkVersion [0-9]\+/targetSdkVersion $TARGET_SDK/" app/android/app/build.gradle
+
+      - name: Enable ProGuard / R8 if requested
+        if: env.USE_PROGUARD == 'true'
+        run: |
+          echo "android.buildTypes.release.minifyEnabled true" >> app/android/app/build.gradle
+          echo "android.buildTypes.release.proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'" >> app/android/app/build.gradle
+
+      # ---------- Setup Flutter with FIXED dependencies (using repo's pubspec.yaml) ----------
+      - name: Setup Flutter (fixed version)
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0'
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
-      
-      - name: Replace main.dart
+
+      - name: Cache Flutter pub dependencies (full offline)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PUB_CACHE_PATH }}
+          key: ${{ runner.os }}-pub-${{ hashFiles('app/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Pre-download all dependencies (first time only)
         run: |
-          echo "${{ github.event.client_payload.source_files.main_dart }}" | base64 -d > lib/main.dart
-      
-      - name: Install dependencies
-        run: flutter pub get
-      
-      - name: Build APK
-        run: flutter build apk --release
-      
-      - name: Upload APK
+          cd app
+          flutter pub get
+          flutter precache --all
+        continue-on-error: true
+
+      - name: Build APK (offline mode)
+        run: |
+          cd app
+          if [ "$BUILD_TYPE" = "release" ]; then
+            flutter build apk --release --offline
+          else
+            flutter build apk --debug --offline
+          fi
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: app-${{ env.BUILD_TYPE }}
+          path: app/build/app/outputs/flutter-apk/*.apk
+          retention-days: 7
+
+  # ---------- Clean cache job (separate event) ----------
+  clean-cache:
+    if: github.event.action == 'clean_cache'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clear GitHub Actions cache
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const caches = await github.rest.actions.getActionsCacheList({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            for (const cache of caches.data.actions_caches) {
+              await github.rest.actions.deleteActionsCacheById({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                cache_id: cache.id,
+              });
+              console.log(`Deleted cache: ${cache.key}`);
+            }
+      - name: Log cleanup
+        run: echo "Cache cleanup triggered by UI"
