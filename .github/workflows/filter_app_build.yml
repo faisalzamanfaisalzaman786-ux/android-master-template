@@ -24,14 +24,17 @@ jobs:
           mkdir -p lib android/app/src/main assets
           echo "✅ Cleanup done."
 
-      # Verify fixed pubspec.yaml exists
-      - name: Verify fixed pubspec.yaml
+      # Fix SDK constraint in pubspec.yaml to match Flutter 3.19.6
+      - name: Fix Dart SDK constraint in pubspec.yaml
         run: |
-          if [ ! -f "pubspec.yaml" ]; then
-            echo "❌ ERROR: No pubspec.yaml found in root"
+          if [ -f "pubspec.yaml" ]; then
+            sed -i 's/sdk: ">=3.5.0 <4.0.0"/sdk: ">=3.0.0 <4.0.0"/' pubspec.yaml
+            sed -i "s/sdk: '>=3.5.0 <4.0.0'/sdk: '>=3.0.0 <4.0.0'/" pubspec.yaml
+            echo "✅ SDK constraint updated to >=3.0.0 <4.0.0"
+          else
+            echo "❌ ERROR: pubspec.yaml not found"
             exit 1
           fi
-          echo "✅ Using fixed pubspec.yaml from repository"
 
       # Decode files from UI
       - name: Decode main.dart
@@ -145,7 +148,6 @@ jobs:
           flutter precache --all
         continue-on-error: true
 
-      # ---------- IMPORTANT FIX: Removed --offline from build command ----------
       - name: Build APK
         run: |
           if [ "$BUILD_TYPE" = "release" ]; then
