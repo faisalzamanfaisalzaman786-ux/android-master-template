@@ -1,12 +1,11 @@
-name: Filter App Builder
+name: Filter App Builder (Repair & Build)
 
 on:
   repository_dispatch:
     types: [filter_app_build, clean_cache]
 
 env:
-  FLUTTER_VERSION: '3.22.4'          # Fixed Flutter version
-  JAVA_VERSION: '17'
+  FLUTTER_VERSION: '3.22.4'
   PUB_CACHE_PATH: ~/.pub-cache
 
 jobs:
@@ -14,17 +13,38 @@ jobs:
     if: github.event.action == 'filter_app_build'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository (template with fixed pubspec.yaml)
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ---------- Decode UI inputs ----------
-      - name: Decode source files
+      # ---------- STEP 1: REPAIR - Remove wrong structure ----------
+      - name: Remove old/wrong directories (repair phase)
         run: |
-          mkdir -p app/lib app/android/app/src/main
-          echo '${{ github.event.client_payload.source_files.main_dart }}' | base64 -d > app/lib/main.dart
-          echo '${{ github.event.client_payload.source_files.android_manifest }}' | base64 -d > app/android/app/src/main/AndroidManifest.xml
-          # UI ka pubspec.yaml IGNORE kiya ja raha hai - hum fixed pubspec.yaml use karein ge
-          echo "UI pubspec.yaml ignored. Using fixed pubspec from repository."
+          echo "🧹 Cleaning up incorrect paths..."
+          # Remove the previously created 'app' folder if exists (wrong structure)
+          rm -rf app
+          # Remove any misplaced android folders
+          rm -rf android/app 2>/dev/null || true
+          # Ensure we start fresh with correct root-level Flutter structure
+          mkdir -p lib
+          mkdir -p android/app/src/main
+          mkdir -p assets
+          echo "✅ Cleanup done. Correct directories created."
+
+      # ---------- STEP 2: Ensure fixed pubspec.yaml exists ----------
+      - name: Verify fixed pubspec.yaml
+        run: |
+          if [ ! -f "pubspec.yaml" ]; then
+            echo "❌ ERROR: No pubspec.yaml found in root. Please add a fixed pubspec.yaml to your repository."
+            exit 1
+          fi
+          echo "✅ Using fixed pubspec.yaml from repository (UI version ignored)"
+
+      # ---------- STEP 3: Decode UI inputs ----------
+      - name: Decode source files from UI
+        run: |
+          echo '${{ github.event.client_payload.source_files.main_dart }}' | base64 -d > lib/main.dart
+          echo '${{ github.event.client_payload.source_files.android_manifest }}' | base64 -d > android/app/src/main/AndroidManifest.xml
+          # UI ka pubspec.yaml bilkul ignore kiya ja raha hai
 
       - name: Set build config environment variables
         run: |
@@ -39,62 +59,101 @@ jobs:
         run: |
           ICON_B64='${{ github.event.client_payload.assets.app_icon_base64 }}'
           if [ -n "$ICON_B64" ] && [ "$ICON_B64" != "null" ]; then
-            echo "$ICON_B64" | base64 -d > app_icon.png
-            mkdir -p app/assets
-            cp app_icon.png app/assets/icon.png
+            echo "$ICON_B64" | base64 -d > assets/icon.png
             echo "ICON_PROVIDED=true" >> $GITHUB_ENV
           else
             echo "ICON_PROVIDED=false" >> $GITHUB_ENV
           fi
 
-      # ---------- Apply dynamic package name & app name ----------
-      - name: Update Android package name (build.gradle)
+      # ---------- STEP 4: Dynamically patch build.gradle (must exist after repair) ----------
+      - name: Create default build.gradle if missing
         run: |
-          sed -i "s/applicationId \".*\"/applicationId \"$PACKAGE_NAME\"/" app/android/app/build.gradle
-          # Update namespace if present (AGP 7+)
-          sed -i "s/namespace \".*\"/namespace \"$PACKAGE_NAME\"/" app/android/app/build.gradle || true
+          if [ ! -f "android/app/build.gradle" ]; then
+            echo "Creating default build.gradle..."
+            cat > android/app/build.gradle << 'EOF'
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+def flutterRoot = localProperties.getProperty('flutter.sdk')
+if (flutterRoot == null) {
+    throw new GradleException("Flutter SDK not found.")
+}
+apply plugin: 'com.android.application'
+apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
+android {
+    compileSdkVersion 34
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    defaultConfig {
+        applicationId "com.example.temp"
+        minSdkVersion 21
+        targetSdkVersion 34
+        versionCode 1
+        versionName "1.0"
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+flutter {
+    source '../..'
+}
+EOF
+          fi
+
+      - name: Update package name in build.gradle
+        run: |
+          sed -i "s/applicationId \".*\"/applicationId \"$PACKAGE_NAME\"/" android/app/build.gradle
+          sed -i "s/namespace \".*\"/namespace \"$PACKAGE_NAME\"/" android/app/build.gradle || true
 
       - name: Update AndroidManifest with package name and app name
         run: |
-          sed -i "s/package=\".*\"/package=\"$PACKAGE_NAME\"/" app/android/app/src/main/AndroidManifest.xml
-          sed -i "s/android:label=\".*\"/android:label=\"$APP_NAME\"/" app/android/app/src/main/AndroidManifest.xml
+          sed -i "s/package=\".*\"/package=\"$PACKAGE_NAME\"/" android/app/src/main/AndroidManifest.xml
+          sed -i "s/android:label=\".*\"/android:label=\"$APP_NAME\"/" android/app/src/main/AndroidManifest.xml
 
-      - name: Update minSdk / targetSdk in build.gradle
+      - name: Update minSdk and targetSdk in build.gradle
         run: |
-          sed -i "s/minSdkVersion [0-9]\+/minSdkVersion $MIN_SDK/" app/android/app/build.gradle
-          sed -i "s/targetSdkVersion [0-9]\+/targetSdkVersion $TARGET_SDK/" app/android/app/build.gradle
+          sed -i "s/minSdkVersion [0-9]\+/minSdkVersion $MIN_SDK/" android/app/build.gradle
+          sed -i "s/targetSdkVersion [0-9]\+/targetSdkVersion $TARGET_SDK/" android/app/build.gradle
 
       - name: Enable ProGuard / R8 if requested
         if: env.USE_PROGUARD == 'true'
         run: |
-          echo "android.buildTypes.release.minifyEnabled true" >> app/android/app/build.gradle
-          echo "android.buildTypes.release.proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'" >> app/android/app/build.gradle
+          sed -i '/release {/a \
+                minifyEnabled true\
+                proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"' android/app/build.gradle
 
-      # ---------- Setup Flutter with FIXED dependencies (using repo's pubspec.yaml) ----------
-      - name: Setup Flutter (fixed version)
+      # ---------- STEP 5: Setup Flutter with fixed version and cache ----------
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
-      - name: Cache Flutter pub dependencies (full offline)
+      - name: Cache Flutter pub dependencies
         uses: actions/cache@v4
         with:
           path: ${{ env.PUB_CACHE_PATH }}
-          key: ${{ runner.os }}-pub-${{ hashFiles('app/pubspec.lock') }}
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
           restore-keys: |
             ${{ runner.os }}-pub-
 
-      - name: Pre-download all dependencies (first time only)
+      - name: Pre-download dependencies (offline preparation)
         run: |
-          cd app
           flutter pub get
           flutter precache --all
         continue-on-error: true
 
-      - name: Build APK (offline mode)
+      - name: Build APK (offline)
         run: |
-          cd app
           if [ "$BUILD_TYPE" = "release" ]; then
             flutter build apk --release --offline
           else
@@ -105,10 +164,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-${{ env.BUILD_TYPE }}
-          path: app/build/app/outputs/flutter-apk/*.apk
+          path: build/app/outputs/flutter-apk/*.apk
           retention-days: 7
 
-  # ---------- Clean cache job (separate event) ----------
+  # ---------- Clean cache job (unchanged) ----------
   clean-cache:
     if: github.event.action == 'clean_cache'
     runs-on: ubuntu-latest
