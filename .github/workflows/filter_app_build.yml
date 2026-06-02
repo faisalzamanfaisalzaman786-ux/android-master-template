@@ -1,4 +1,4 @@
-name: Filter App Builder (Stable with Version Locking)
+name: Filter App Builder (Stable & Error‑Controlled)
 on:
   repository_dispatch:
     types: [filter_app_build]
@@ -16,14 +16,14 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # ---------- Use a FIXED stable Flutter version (not latest) ----------
+      # ---------- Fixed stable Flutter version ----------
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.4'   # ✅ مستحکم ورژن، breaking changes سے بچنے کے لیے
+          flutter-version: '3.22.4'   # ← Stable, known working
           channel: 'stable'
           cache: true
 
-      # ---------- Cache Gradle and Pub with lock file ----------
+      # ---------- Caching ----------
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
@@ -33,7 +33,7 @@ jobs:
           key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
           restore-keys: ${{ runner.os }}-gradle-
 
-      - name: Cache Pub (using pubspec.lock for exact versions)
+      - name: Cache Pub (using lock file)
         uses: actions/cache@v4
         with:
           path: ${{ env.PUB_CACHE }}
@@ -42,6 +42,7 @@ jobs:
             ${{ runner.os }}-pub-
             ${{ runner.os }}-pub-${{ hashFiles('pubspec.yaml') }}
 
+      # ---------- Payload handling ----------
       - name: Save payload
         run: echo '${{ toJson(github.event.client_payload) }}' > payload.json
 
@@ -52,7 +53,7 @@ jobs:
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
           echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
 
-      # ---------- Create fresh Flutter project structure ----------
+      # ---------- Create fresh Flutter project ----------
       - name: Create fresh Flutter project
         run: |
           PKG="${{ env.PACKAGE_NAME }}"
@@ -61,23 +62,23 @@ jobs:
           rm -rf android ios .dart_tool build
           flutter create --org "$ORG" --project-name "$PROJ" --platforms=android .
 
-      # ---------- Write main.dart from payload ----------
+      # ---------- Write main.dart ----------
       - name: Write main.dart
         run: |
           MAIN_B64=$(jq -r '.source_files.main_dart // ""' payload.json)
           [ -z "$MAIN_B64" ] || [ "$MAIN_B64" = "null" ] && echo "❌ No main.dart" && exit 1
           echo "$MAIN_B64" | base64 -d > lib/main.dart
 
-      # ---------- Write raw AndroidManifest.xml ----------
-      - name: Write raw AndroidManifest.xml
+      # ---------- Write AndroidManifest.xml ----------
+      - name: Write AndroidManifest.xml
         run: |
           MANIFEST_B64=$(jq -r '.source_files.android_manifest // ""' payload.json)
           [ -z "$MANIFEST_B64" ] || [ "$MANIFEST_B64" = "null" ] && echo "❌ No manifest" && exit 1
           mkdir -p android/app/src/main
           echo "$MANIFEST_B64" | base64 -d > android/app/src/main/AndroidManifest.xml
 
-      # ---------- 🔥 IMPROVED: Process pubspec.yaml safely ----------
-      - name: Process pubspec.yaml (auto-fix 'any' to compatible versions)
+      # ---------- 🔥 SAFE PUBSPEC PROCESSING (NO 'any' OVERWRITE) ----------
+      - name: Process pubspec.yaml (fix 'any' and validate)
         run: |
           PUBSPEC_B64=$(jq -r '.source_files.pubspec_yaml // ""' payload.json)
           if [ -z "$PUBSPEC_B64" ] || [ "$PUBSPEC_B64" = "null" ]; then
@@ -86,32 +87,63 @@ jobs:
           fi
           echo "$PUBSPEC_B64" | base64 -d > pubspec.yaml.orig
           
-          # We'll keep original but replace "any" with "^" version using current latest
-          # First, get current latest compatible versions from pub.dev
+          # Start with original
           cp pubspec.yaml.orig pubspec.yaml
           
-          # Extract dependencies section and find lines with ": any"
-          grep -E '^[ ]+[a-zA-Z_][a-zA-Z0-9_]*: any' pubspec.yaml | while read line; do
+          # Function to get latest stable version from pub.dev
+          get_latest() {
+            pkg="$1"
+            # Try up to 3 times
+            for i in 1 2 3; do
+              resp=$(curl -s "https://pub.dev/api/packages/$pkg" 2>/dev/null) || continue
+              latest=$(echo "$resp" | jq -r '.versions[-1].version // ""')
+              if [ -n "$latest" ] && [ "$latest" != "null" ]; then
+                # Exclude pre-releases if possible
+                stable=$(echo "$resp" | jq -r '[.versions[] | .version | select(contains("-") | not)] | last // ""')
+                if [ -n "$stable" ] && [ "$stable" != "null" ]; then
+                  echo "$stable"
+                  return 0
+                else
+                  echo "$latest"
+                  return 0
+                fi
+              fi
+              sleep 1
+            done
+            echo ""
+            return 1
+          }
+          
+          # Replace any occurrence of ": any" with latest compatible version (using ^)
+          # But only for dependencies section (not dev_dependencies unless specified)
+          sed -i '/^dependencies:/,/^dev_dependencies:/ {
+            /: any$/ {
+              s/^\(\s*\)\([a-zA-Z_][a-zA-Z0-9_]*\): any$/\1\2: any/
+              pkg="\2"
+              latest=$(get_latest "$pkg")
+              if [ -n "$latest" ]; then
+                echo "Replacing $pkg: any -> ^$latest"
+                sed -i "s/^\(\s*\)$pkg: any$/\1$pkg: ^$latest/" pubspec.yaml
+              else
+                echo "⚠️ Could not get version for $pkg, leaving as any (will fail later)"
+              fi
+            }
+          }' pubspec.yaml
+          
+          # Also fix direct "any" under dependencies (non-captured)
+          sed -i '/^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*: any$/ {
+            s/: any/: any/
             pkg=$(echo "$line" | cut -d: -f1 | xargs)
-            echo "Fixing package: $pkg"
-            # Query pub.dev for latest stable version
-            latest=$(curl -s "https://pub.dev/api/packages/$pkg" | jq -r '.versions[-1].version // ""')
+            latest=$(get_latest "$pkg")
             if [ -n "$latest" ]; then
-              # Replace "any" with "^$latest" (caret allows patch updates only)
-              sed -i "s/$pkg: any/$pkg: ^$latest/" pubspec.yaml
-            else
-              # Fallback: use a safe range
-              sed -i "s/$pkg: any/$pkg: any/" pubspec.yaml
+              sed -i "s/^\(\s*\)$pkg: any$/\1$pkg: ^$latest/"
             fi
-          done
+          }' pubspec.yaml
           
-          # Also fix any direct "any" under dev_dependencies
-          sed -i 's/: any/: any/' pubspec.yaml   # temporary, but above loop handles it
-          
-          echo "✅ pubspec.yaml processed:"
+          echo "✅ Processed pubspec.yaml:"
           cat pubspec.yaml
 
-      # ---------- Auto-fix Android permissions (same as before) ----------
+      # ---------- Auto-fix Android permissions ----------
       - name: Auto-fix Android permissions
         run: |
           REQUIRED_PERMS=("android.permission.INTERNET" "android.permission.ACCESS_NETWORK_STATE")
@@ -139,11 +171,16 @@ jobs:
             fi
           done
 
-      # ---------- Get dependencies with lock file (exact versions) ----------
-      - name: Get dependencies and generate lock file
+      # ---------- Get dependencies (with lock) ----------
+      - name: Get dependencies
         run: |
           flutter pub get
-          # Lock file now contains exact versions, cache will use it next time
+          # If pub get fails, try to clean and retry once
+          if [ $? -ne 0 ]; then
+            echo "⚠️ flutter pub get failed, trying flutter clean and retry..."
+            flutter clean
+            flutter pub get
+          fi
 
       - name: Create assets folder
         run: mkdir -p assets
@@ -164,7 +201,8 @@ jobs:
             printf "storeFile=release-keystore.jks\n" >> android/key.properties
           fi
 
-      - name: Write top-level build.gradle (standard)
+      # ---------- Write build.gradle files (error-proof) ----------
+      - name: Write top-level build.gradle
         run: |
           cat > android/build.gradle <<'EOF'
           buildscript {
@@ -196,7 +234,7 @@ jobs:
           }
           EOF
 
-      - name: Write app/build.gradle (minSdk 24, namespace from env)
+      - name: Write app/build.gradle (with namespace and minSdk)
         run: |
           if [ -f "android/key.properties" ]; then
             cat > android/app/build.gradle <<EOF
@@ -289,10 +327,11 @@ jobs:
         run: |
           sed -i "s/android:label=\".*\"/android:label=\"${{ env.APP_NAME }}\"/" android/app/src/main/AndroidManifest.xml
 
+      # ---------- Icon handling ----------
       - name: Install ImageMagick
         run: sudo apt-get update && sudo apt-get install -y imagemagick
 
-      - name: Apply custom icon (if provided)
+      - name: Apply custom icon
         run: |
           ICON_B64=$(jq -r '.assets.app_icon_base64 // ""' payload.json)
           if [ -n "$ICON_B64" ] && [ "$ICON_B64" != "null" ]; then
@@ -310,12 +349,14 @@ jobs:
             done
           fi
 
+      # ---------- Build release APK and AAB ----------
       - name: Build release APK
         run: flutter build apk --release
 
       - name: Build release AAB
         run: flutter build appbundle --release
 
+      # ---------- Upload artifacts ----------
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
