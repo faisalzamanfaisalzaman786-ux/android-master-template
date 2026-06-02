@@ -21,17 +21,17 @@ jobs:
           rm -rf android/app 2>/dev/null || true
           mkdir -p lib android/app/src/main assets
 
-      # 🔧 یہ نیا سٹیپ شامل کریں
-      - name: Fix SDK constraint in pubspec.yaml
+      # ✅ یہ نیا سٹیپ SDK constraint کو درست کرتا ہے
+      - name: Fix Dart SDK constraint in pubspec.yaml
         run: |
-          if [ -f "pubspec.yaml" ]; then
-            sed -i 's/sdk: ">=3.5.0 <4.0.0"/sdk: ">=3.0.0 <4.0.0"/' pubspec.yaml
-            sed -i "s/sdk: '>=3.5.0 <4.0.0'/sdk: '>=3.0.0 <4.0.0'/" pubspec.yaml
-            echo "✅ SDK constraint updated"
-          else
-            echo "❌ pubspec.yaml not found"
+          if [ ! -f "pubspec.yaml" ]; then
+            echo "❌ pubspec.yaml not found!"
             exit 1
           fi
+          # دونوں قسم کے quotes handle کرتا ہے
+          sed -i 's/sdk: ">=3.5.0 <4.0.0"/sdk: ">=3.0.0 <4.0.0"/' pubspec.yaml
+          sed -i "s/sdk: '>=3.5.0 <4.0.0'/sdk: '>=3.0.0 <4.0.0'/" pubspec.yaml
+          echo "✅ SDK constraint updated to >=3.0.0 <4.0.0"
 
       - name: Decode main.dart
         run: echo '${{ github.event.client_payload.source_files.main_dart }}' | base64 -d > lib/main.dart
@@ -59,42 +59,43 @@ jobs:
       - name: Create default build.gradle if missing
         run: |
           if [ ! -f "android/app/build.gradle" ]; then
-            printf '%s\n' \
-              'def localProperties = new Properties()' \
-              'def localPropertiesFile = rootProject.file("local.properties")' \
-              'if (localPropertiesFile.exists()) {' \
-              '    localPropertiesFile.withReader("UTF-8") { reader ->' \
-              '        localProperties.load(reader)' \
-              '    }' \
-              '}' \
-              'def flutterRoot = localProperties.getProperty("flutter.sdk")' \
-              'if (flutterRoot == null) {' \
-              '    throw new GradleException("Flutter SDK not found.")' \
-              '}' \
-              'apply plugin: "com.android.application"' \
-              'apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"' \
-              'android {' \
-              '    compileSdkVersion 34' \
-              '    compileOptions {' \
-              '        sourceCompatibility JavaVersion.VERSION_17' \
-              '        targetCompatibility JavaVersion.VERSION_17' \
-              '    }' \
-              '    defaultConfig {' \
-              '        applicationId "com.example.temp"' \
-              '        minSdkVersion 21' \
-              '        targetSdkVersion 34' \
-              '        versionCode 1' \
-              '        versionName "1.0"' \
-              '    }' \
-              '    buildTypes {' \
-              '        release {' \
-              '            signingConfig signingConfigs.debug' \
-              '        }' \
-              '    }' \
-              '}' \
-              'flutter {' \
-              '    source "../.."' \
-              '}' > android/app/build.gradle
+            cat > android/app/build.gradle << 'EOF'
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+def flutterRoot = localProperties.getProperty('flutter.sdk')
+if (flutterRoot == null) {
+    throw new GradleException("Flutter SDK not found.")
+}
+apply plugin: 'com.android.application'
+apply from: "$flutterRoot/packages/flutter_tools/gradle/flutter.gradle"
+android {
+    compileSdkVersion 34
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    defaultConfig {
+        applicationId "com.example.temp"
+        minSdkVersion 21
+        targetSdkVersion 34
+        versionCode 1
+        versionName "1.0"
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debug
+        }
+    }
+}
+flutter {
+    source '../..'
+}
+EOF
           fi
 
       - name: Update package name
