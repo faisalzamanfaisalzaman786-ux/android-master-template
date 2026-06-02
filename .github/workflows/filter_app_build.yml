@@ -1,45 +1,39 @@
-name: One-time Flutter Project Structure Creator
+name: Filter App Builder
 
 on:
-  workflow_dispatch:    # صرف مینولی رن کے لیے
-
-permissions:
-  contents: write       # تاکہ یہ ریپازٹری میں فائلیں push کر سکے
+  repository_dispatch:
+    types: [filter_app_build]
 
 jobs:
-  create-structure:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-
+      - uses: actions/checkout@v4
+      
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
-
-      - name: Setup Flutter (fixed version)
+      
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.0'
-          channel: 'stable'
-
-      - name: Create Flutter project (overwrite if exists)
+          cache: true
+      
+      - name: Replace main.dart
         run: |
-          # اگر پہلے سے کوئی پرانی فائلیں ہیں تو ہٹا دیں (صاف سلیٹ)
-          rm -rf .dart_tool .packages pubspec.lock android ios lib test
-          # نیا Flutter پروجیکٹ بنائیں
-          flutter create --platforms=android --project-name=my_app --org=com.example .
-          # pubspec.lock کو بھی محفوظ کر لیں (dependencies freeze)
-          git add .
-
-      - name: Commit and push the generated structure
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: add Flutter project structure (one-time setup)" || echo "No changes to commit"
-          git push
+          echo "${{ github.event.client_payload.source_files.main_dart }}" | base64 -d > lib/main.dart
+      
+      - name: Install dependencies
+        run: flutter pub get
+      
+      - name: Build APK
+        run: flutter build apk --release
+      
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: build/app/outputs/flutter-apk/app-release.apk
