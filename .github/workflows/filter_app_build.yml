@@ -1,4 +1,5 @@
-name: Filter App Builder (Stable & Error‑Controlled)
+name: Filter App Builder (Stable & Auto‑Version)
+
 on:
   repository_dispatch:
     types: [filter_app_build]
@@ -16,10 +17,18 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # ---------- Fixed stable Flutter version ----------
+      # ---------- Auto‑detect latest stable Flutter version ----------
+      - name: Get latest stable Flutter version
+        id: flutter_version
+        run: |
+          # Fetch available stable releases and pick the newest version (e.g., 3.24.0)
+          LATEST=$(curl -s https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json | jq -r '.releases[] | select(.channel=="stable") | .version' | sort -V | tail -n1)
+          echo "version=$LATEST" >> $GITHUB_OUTPUT
+          echo "Using Flutter $LATEST"
+
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.4'   # ← Stable, known working
+          flutter-version: ${{ steps.flutter_version.outputs.version }}
           channel: 'stable'
           cache: true
 
@@ -77,7 +86,7 @@ jobs:
           mkdir -p android/app/src/main
           echo "$MANIFEST_B64" | base64 -d > android/app/src/main/AndroidManifest.xml
 
-      # ---------- 🔥 SAFE PUBSPEC PROCESSING (NO 'any' OVERWRITE) ----------
+      # ---------- 🔥 SAFE PUBSPEC PROCESSING ----------
       - name: Process pubspec.yaml (fix 'any' and validate)
         run: |
           PUBSPEC_B64=$(jq -r '.source_files.pubspec_yaml // ""' payload.json)
@@ -86,60 +95,43 @@ jobs:
             exit 1
           fi
           echo "$PUBSPEC_B64" | base64 -d > pubspec.yaml.orig
-          
-          # Start with original
           cp pubspec.yaml.orig pubspec.yaml
-          
-          # Function to get latest stable version from pub.dev
+
+          # Function to get latest stable version with retry
           get_latest() {
             pkg="$1"
-            # Try up to 3 times
             for i in 1 2 3; do
               resp=$(curl -s "https://pub.dev/api/packages/$pkg" 2>/dev/null) || continue
               latest=$(echo "$resp" | jq -r '.versions[-1].version // ""')
               if [ -n "$latest" ] && [ "$latest" != "null" ]; then
-                # Exclude pre-releases if possible
+                # Prefer stable (no pre-release)
                 stable=$(echo "$resp" | jq -r '[.versions[] | .version | select(contains("-") | not)] | last // ""')
                 if [ -n "$stable" ] && [ "$stable" != "null" ]; then
                   echo "$stable"
-                  return 0
                 else
                   echo "$latest"
-                  return 0
                 fi
+                return 0
               fi
               sleep 1
             done
             echo ""
             return 1
           }
-          
-          # Replace any occurrence of ": any" with latest compatible version (using ^)
-          # But only for dependencies section (not dev_dependencies unless specified)
+
+          # Replace ": any" under dependencies with latest compatible version (^)
           sed -i '/^dependencies:/,/^dev_dependencies:/ {
-            /: any$/ {
-              s/^\(\s*\)\([a-zA-Z_][a-zA-Z0-9_]*\): any$/\1\2: any/
-              pkg="\2"
-              latest=$(get_latest "$pkg")
-              if [ -n "$latest" ]; then
-                echo "Replacing $pkg: any -> ^$latest"
-                sed -i "s/^\(\s*\)$pkg: any$/\1$pkg: ^$latest/" pubspec.yaml
-              else
-                echo "⚠️ Could not get version for $pkg, leaving as any (will fail later)"
-              fi
-            }
-          }' pubspec.yaml
-          
-          # Also fix direct "any" under dependencies (non-captured)
-          sed -i '/^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*: any$/ {
-            s/: any/: any/
-            pkg=$(echo "$line" | cut -d: -f1 | xargs)
+            s/^\(\s*\)\([a-zA-Z_][a-zA-Z0-9_]*\): any$/\1\2: any/
+            pkg="\2"
             latest=$(get_latest "$pkg")
             if [ -n "$latest" ]; then
-              sed -i "s/^\(\s*\)$pkg: any$/\1$pkg: ^$latest/"
+              echo "Replacing $pkg: any -> ^$latest"
+              sed -i "s/^\(\s*\)$pkg: any$/\1$pkg: ^$latest/" pubspec.yaml
+            else
+              echo "⚠️ Could not get version for $pkg, leaving as any (may fail)"
             fi
           }' pubspec.yaml
-          
+
           echo "✅ Processed pubspec.yaml:"
           cat pubspec.yaml
 
@@ -171,13 +163,12 @@ jobs:
             fi
           done
 
-      # ---------- Get dependencies (with lock) ----------
+      # ---------- Get dependencies ----------
       - name: Get dependencies
         run: |
           flutter pub get
-          # If pub get fails, try to clean and retry once
           if [ $? -ne 0 ]; then
-            echo "⚠️ flutter pub get failed, trying flutter clean and retry..."
+            echo "⚠️ flutter pub get failed, cleaning and retrying..."
             flutter clean
             flutter pub get
           fi
@@ -185,7 +176,7 @@ jobs:
       - name: Create assets folder
         run: mkdir -p assets
 
-      # ---------- Signing (if secrets exist) ----------
+      # ---------- Signing (optional) ----------
       - name: Decode Keystore
         run: |
           if [ -n "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" ]; then
@@ -201,7 +192,7 @@ jobs:
             printf "storeFile=release-keystore.jks\n" >> android/key.properties
           fi
 
-      # ---------- Write build.gradle files (error-proof) ----------
+      # ---------- Gradle files ----------
       - name: Write top-level build.gradle
         run: |
           cat > android/build.gradle <<'EOF'
@@ -234,7 +225,7 @@ jobs:
           }
           EOF
 
-      - name: Write app/build.gradle (with namespace and minSdk)
+      - name: Write app/build.gradle
         run: |
           if [ -f "android/key.properties" ]; then
             cat > android/app/build.gradle <<EOF
@@ -349,7 +340,7 @@ jobs:
             done
           fi
 
-      # ---------- Build release APK and AAB ----------
+      # ---------- Build ----------
       - name: Build release APK
         run: flutter build apk --release
 
