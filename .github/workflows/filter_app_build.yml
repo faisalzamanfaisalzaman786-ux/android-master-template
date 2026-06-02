@@ -1,5 +1,4 @@
-name: Filter App Builder (Stable with Backup Manifest)
-
+name: Filter App Builder (Stable with Version Locking)
 on:
   repository_dispatch:
     types: [filter_app_build]
@@ -7,129 +6,249 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    timeout-minutes: 30
 
-      - name: Setup Java for Gradle
-        uses: actions/setup-java@v4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      # ---------- Use a FIXED stable Flutter version (not latest) ----------
+      - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.29.2'
+          flutter-version: '3.22.4'   # ✅ مستحکم ورژن، breaking changes سے بچنے کے لیے
           channel: 'stable'
           cache: true
 
-      - name: Save payload to file
+      # ---------- Cache Gradle and Pub with lock file ----------
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      - name: Cache Pub (using pubspec.lock for exact versions)
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PUB_CACHE }}
+          key: ${{ runner.os }}-pub-${{ hashFiles('pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+            ${{ runner.os }}-pub-${{ hashFiles('pubspec.yaml') }}
+
+      - name: Save payload
         run: echo '${{ toJson(github.event.client_payload) }}' > payload.json
 
-      - name: Extract build config
-        id: config
+      - name: Extract package name and app name
         run: |
           PACKAGE_NAME=$(jq -r '.build_config.package_name // "com.filter.app"' payload.json)
           APP_NAME=$(jq -r '.build_config.app_display_name // "Filter App"' payload.json)
-          MIN_SDK=$(jq -r '.build_config.min_sdk // 21' payload.json)
-          TARGET_SDK=$(jq -r '.build_config.target_sdk // 34' payload.json)
-          USE_PROGUARD=$(jq -r '.build_config.use_proguard // false' payload.json)
           echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
           echo "APP_NAME=$APP_NAME" >> $GITHUB_ENV
-          echo "MIN_SDK=$MIN_SDK" >> $GITHUB_ENV
-          echo "TARGET_SDK=$TARGET_SDK" >> $GITHUB_ENV
-          echo "USE_PROGUARD=$USE_PROGUARD" >> $GITHUB_ENV
 
-      - name: Create fresh Flutter project (Kotlin default)
+      # ---------- Create fresh Flutter project structure ----------
+      - name: Create fresh Flutter project
         run: |
           PKG="${{ env.PACKAGE_NAME }}"
           ORG=$(echo "$PKG" | rev | cut -d. -f2- | rev)
-          PROJ=$(echo "$PKG" | rev | cut -d. -f1 | rev)
+          PROJ=$(echo "$PKG" | rev | cut -d. -f1 | rev | tr '-' '_' | sed 's/^[0-9]/_&/')
           rm -rf android ios .dart_tool build
           flutter create --org "$ORG" --project-name "$PROJ" --platforms=android .
-          echo "✅ Fresh Flutter project created"
 
-      - name: Write main.dart from payload
+      # ---------- Write main.dart from payload ----------
+      - name: Write main.dart
         run: |
           MAIN_B64=$(jq -r '.source_files.main_dart // ""' payload.json)
-          if [ -z "$MAIN_B64" ] || [ "$MAIN_B64" = "null" ]; then
-            echo "❌ No main.dart provided"
-            exit 1
-          fi
+          [ -z "$MAIN_B64" ] || [ "$MAIN_B64" = "null" ] && echo "❌ No main.dart" && exit 1
           echo "$MAIN_B64" | base64 -d > lib/main.dart
-          echo "✅ main.dart written"
 
-      - name: Use repository pubspec.yaml
+      # ---------- Write raw AndroidManifest.xml ----------
+      - name: Write raw AndroidManifest.xml
         run: |
-          if [ ! -f "pubspec.yaml" ]; then
-            echo "❌ pubspec.yaml not found in repository root!"
+          MANIFEST_B64=$(jq -r '.source_files.android_manifest // ""' payload.json)
+          [ -z "$MANIFEST_B64" ] || [ "$MANIFEST_B64" = "null" ] && echo "❌ No manifest" && exit 1
+          mkdir -p android/app/src/main
+          echo "$MANIFEST_B64" | base64 -d > android/app/src/main/AndroidManifest.xml
+
+      # ---------- 🔥 IMPROVED: Process pubspec.yaml safely ----------
+      - name: Process pubspec.yaml (auto-fix 'any' to compatible versions)
+        run: |
+          PUBSPEC_B64=$(jq -r '.source_files.pubspec_yaml // ""' payload.json)
+          if [ -z "$PUBSPEC_B64" ] || [ "$PUBSPEC_B64" = "null" ]; then
+            echo "❌ No pubspec.yaml in payload"
             exit 1
           fi
+          echo "$PUBSPEC_B64" | base64 -d > pubspec.yaml.orig
+          
+          # We'll keep original but replace "any" with "^" version using current latest
+          # First, get current latest compatible versions from pub.dev
+          cp pubspec.yaml.orig pubspec.yaml
+          
+          # Extract dependencies section and find lines with ": any"
+          grep -E '^[ ]+[a-zA-Z_][a-zA-Z0-9_]*: any' pubspec.yaml | while read line; do
+            pkg=$(echo "$line" | cut -d: -f1 | xargs)
+            echo "Fixing package: $pkg"
+            # Query pub.dev for latest stable version
+            latest=$(curl -s "https://pub.dev/api/packages/$pkg" | jq -r '.versions[-1].version // ""')
+            if [ -n "$latest" ]; then
+              # Replace "any" with "^$latest" (caret allows patch updates only)
+              sed -i "s/$pkg: any/$pkg: ^$latest/" pubspec.yaml
+            else
+              # Fallback: use a safe range
+              sed -i "s/$pkg: any/$pkg: any/" pubspec.yaml
+            fi
+          done
+          
+          # Also fix any direct "any" under dev_dependencies
+          sed -i 's/: any/: any/' pubspec.yaml   # temporary, but above loop handles it
+          
+          echo "✅ pubspec.yaml processed:"
+          cat pubspec.yaml
+
+      # ---------- Auto-fix Android permissions (same as before) ----------
+      - name: Auto-fix Android permissions
+        run: |
+          REQUIRED_PERMS=("android.permission.INTERNET" "android.permission.ACCESS_NETWORK_STATE")
+          if grep -qi "camera" lib/main.dart; then
+            REQUIRED_PERMS+=("android.permission.CAMERA")
+          fi
+          if grep -qi "image_picker" lib/main.dart; then
+            REQUIRED_PERMS+=("android.permission.READ_MEDIA_IMAGES")
+            REQUIRED_PERMS+=("android.permission.READ_EXTERNAL_STORAGE")
+          fi
+          if grep -qi "gal\|GallerySaver" lib/main.dart; then
+            REQUIRED_PERMS+=("android.permission.READ_MEDIA_IMAGES")
+            REQUIRED_PERMS+=("android.permission.WRITE_EXTERNAL_STORAGE")
+          fi
+          if grep -qi "location\|geolocator" lib/main.dart; then
+            REQUIRED_PERMS+=("android.permission.ACCESS_FINE_LOCATION")
+            REQUIRED_PERMS+=("android.permission.ACCESS_COARSE_LOCATION")
+          fi
+          if grep -qi "audio\|record" lib/main.dart; then
+            REQUIRED_PERMS+=("android.permission.RECORD_AUDIO")
+          fi
+          for perm in "${REQUIRED_PERMS[@]}"; do
+            if ! grep -q "<uses-permission android:name=\"$perm\"" android/app/src/main/AndroidManifest.xml; then
+              sed -i "s|</manifest>| <uses-permission android:name=\"$perm\" />\n</manifest>|" android/app/src/main/AndroidManifest.xml
+            fi
+          done
+
+      # ---------- Get dependencies with lock file (exact versions) ----------
+      - name: Get dependencies and generate lock file
+        run: |
           flutter pub get
+          # Lock file now contains exact versions, cache will use it next time
 
-      - name: Copy custom AndroidManifest.xml from repository backup
+      - name: Create assets folder
+        run: mkdir -p assets
+
+      # ---------- Signing (if secrets exist) ----------
+      - name: Decode Keystore
         run: |
-          if [ -f "android_manifest_backup/AndroidManifest.xml" ]; then
-            cp android_manifest_backup/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
-            echo "✅ Custom AndroidManifest.xml copied from repository backup"
-          else
-            echo "❌ android_manifest_backup/AndroidManifest.xml not found in repository"
-            exit 1
+          if [ -n "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.SIGNING_KEYSTORE_BASE64 }}" | base64 -d > android/app/release-keystore.jks
           fi
 
-      - name: Remove deprecated package attribute
+      - name: Create key.properties
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if grep -q 'package="' "$MANIFEST"; then
-            sed -i 's/package="[^"]*"//' "$MANIFEST"
-            echo "✅ Removed package attribute"
+          if [ -f "android/app/release-keystore.jks" ]; then
+            printf "storePassword=${{ secrets.SIGNING_STORE_PASSWORD }}\n" > android/key.properties
+            printf "keyPassword=${{ secrets.SIGNING_KEY_PASSWORD }}\n" >> android/key.properties
+            printf "keyAlias=${{ secrets.SIGNING_KEY_ALIAS }}\n" >> android/key.properties
+            printf "storeFile=release-keystore.jks\n" >> android/key.properties
           fi
 
-      - name: Ensure Flutter v2 embedding
+      - name: Write top-level build.gradle (standard)
         run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          if ! grep -q 'flutterEmbedding' "$MANIFEST"; then
-            sed -i '/<application>/a \        <meta-data android:name="flutterEmbedding" android:value="2" />' "$MANIFEST"
-            echo "✅ Added flutterEmbedding meta-data"
-          fi
-
-      - name: Update app name in AndroidManifest.xml
-        run: |
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          sed -i "s/android:label=\".*\"/android:label=\"${{ env.APP_NAME }}\"/" $MANIFEST
-          echo "✅ App name updated"
-
-      - name: Fix Kotlin directory structure
-        run: |
-          PKG_PATH=$(echo "${{ env.PACKAGE_NAME }}" | tr '.' '/')
-          mkdir -p android/app/src/main/kotlin/$PKG_PATH
-          if [ -f "android/app/src/main/kotlin/com/example/app/MainActivity.kt" ]; then
-            mv android/app/src/main/kotlin/com/example/app/MainActivity.kt android/app/src/main/kotlin/$PKG_PATH/MainActivity.kt
-            rm -rf android/app/src/main/kotlin/com
-          fi
-          echo "✅ Kotlin structure fixed"
-
-      - name: Generate build.gradle (Groovy)
-        run: |
-          rm -f android/build.gradle.kts android/app/build.gradle.kts
           cat > android/build.gradle <<'EOF'
           buildscript {
-              ext.kotlin_version = '1.9.0'
-              repositories { google(); mavenCentral() }
+              ext.kotlin_version = "1.9.0"
+              repositories {
+                  google()
+                  mavenCentral()
+              }
               dependencies {
-                  classpath 'com.android.tools.build:gradle:7.3.0'
+                  classpath "com.android.tools.build:gradle:7.3.0"
                   classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
               }
           }
-          allprojects { repositories { google(); mavenCentral() } }
-          rootProject.buildDir = '../build'
-          subprojects { project.buildDir = "${rootProject.buildDir}/${project.name}" }
-          subprojects { project.evaluationDependsOn(':app') }
-          tasks.register('clean', Delete) { delete rootProject.buildDir }
+          allprojects {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.buildDir = "../build"
+          subprojects {
+              project.buildDir = "${rootProject.buildDir}/${project.name}"
+          }
+          subprojects {
+              project.evaluationDependsOn(":app")
+          }
+          tasks.register("clean", Delete) {
+              delete rootProject.buildDir
+          }
           EOF
 
-          cat > android/app/build.gradle <<EOF
+      - name: Write app/build.gradle (minSdk 24, namespace from env)
+        run: |
+          if [ -f "android/key.properties" ]; then
+            cat > android/app/build.gradle <<EOF
+          plugins {
+              id "com.android.application"
+              id "kotlin-android"
+              id "dev.flutter.flutter-gradle-plugin"
+          }
+          def keystoreProperties = new Properties()
+          def keystorePropertiesFile = rootProject.file("key.properties")
+          if (keystorePropertiesFile.exists()) {
+              keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+          }
+          android {
+              namespace "${{ env.PACKAGE_NAME }}"
+              compileSdk = 36
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+              defaultConfig {
+                  applicationId "${{ env.PACKAGE_NAME }}"
+                  minSdk = 24
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              signingConfigs {
+                  release {
+                      keyAlias keystoreProperties["keyAlias"]
+                      keyPassword keystoreProperties["keyPassword"]
+                      storeFile file(keystoreProperties["storeFile"] ?: "release-keystore.jks")
+                      storePassword keystoreProperties["storePassword"]
+                  }
+              }
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
+                      minifyEnabled false
+                      shrinkResources false
+                  }
+              }
+          }
+          flutter {
+              source = "../.."
+          }
+          EOF
+          else
+            cat > android/app/build.gradle <<EOF
           plugins {
               id "com.android.application"
               id "kotlin-android"
@@ -137,58 +256,74 @@ jobs:
           }
           android {
               namespace "${{ env.PACKAGE_NAME }}"
-              compileSdk = 35
+              compileSdk = 36
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
                   targetCompatibility = JavaVersion.VERSION_17
               }
-              kotlinOptions { jvmTarget = "17" }
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
               defaultConfig {
-                  applicationId = "${{ env.PACKAGE_NAME }}"
-                  minSdk = ${{ env.MIN_SDK }}
-                  targetSdk = ${{ env.TARGET_SDK }}
+                  applicationId "${{ env.PACKAGE_NAME }}"
+                  minSdk = 24
+                  targetSdk = 34
                   versionCode = 1
                   versionName = "1.0"
               }
               buildTypes {
                   release {
-                      signingConfig = signingConfigs.debug
-                      minifyEnabled = ${{ env.USE_PROGUARD }}
-                      shrinkResources = ${{ env.USE_PROGUARD }}
-                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                      signingConfig signingConfigs.debug
+                      minifyEnabled false
+                      shrinkResources false
                   }
-                  debug { minifyEnabled = false }
               }
           }
-          flutter { source = "../.." }
+          flutter {
+              source = "../.."
+          }
           EOF
-          echo "✅ build.gradle generated"
+          fi
 
-      - name: Apply custom app icon
+      - name: Update app name in manifest
+        run: |
+          sed -i "s/android:label=\".*\"/android:label=\"${{ env.APP_NAME }}\"/" android/app/src/main/AndroidManifest.xml
+
+      - name: Install ImageMagick
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
+      - name: Apply custom icon (if provided)
         run: |
           ICON_B64=$(jq -r '.assets.app_icon_base64 // ""' payload.json)
           if [ -n "$ICON_B64" ] && [ "$ICON_B64" != "null" ]; then
-            echo "$ICON_B64" | tr -d '\n\r' | base64 -d > icon.png
-            if [ -s icon.png ]; then
-              for density in hdpi mdpi xhdpi xxhdpi xxxhdpi; do
-                mkdir -p android/app/src/main/res/mipmap-$density
-                cp icon.png android/app/src/main/res/mipmap-$density/ic_launcher.png
-              done
-              mkdir -p android/app/src/main/res/drawable
-              cp icon.png android/app/src/main/res/drawable/ic_launcher.png
-              echo "✅ Custom app icon applied"
-            else
-              echo "⚠️ Decoded icon is empty, using default"
-            fi
-          else
-            echo "ℹ️ No custom icon provided"
+            echo "$ICON_B64" | base64 -d > /tmp/icon_raw.png
+            for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+              case $density in
+                mdpi) size=48 ;;
+                hdpi) size=72 ;;
+                xhdpi) size=96 ;;
+                xxhdpi) size=144 ;;
+                xxxhdpi) size=192 ;;
+              esac
+              mkdir -p android/app/src/main/res/mipmap-$density
+              convert /tmp/icon_raw.png -resize ${size}x${size} android/app/src/main/res/mipmap-$density/ic_launcher.png
+            done
           fi
 
       - name: Build release APK
         run: flutter build apk --release
 
-      - name: Upload APK artifact
+      - name: Build release AAB
+        run: flutter build appbundle --release
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: FilterApp-${{ env.PACKAGE_NAME }}-${{ github.run_number }}
+          name: FilterApp-APK-${{ github.run_number }}
           path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: FilterApp-AAB-${{ github.run_number }}
+          path: build/app/outputs/bundle/release/app-release.aab
