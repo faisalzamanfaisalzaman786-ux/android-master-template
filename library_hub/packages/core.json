@@ -7,7 +7,7 @@
 ,
   { "name": "share_plus", "latest_version": "13.1.0" }
 ,
-  { "name": "path_provider", "latest_version": "2.1.5" }
+  { "name": "path_provider", "latest_version": "2.1.6" }
 ,
   { "name": "image", "latest_version": "4.9.1" }
 ,
