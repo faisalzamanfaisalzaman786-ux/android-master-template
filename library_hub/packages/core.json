@@ -11,7 +11,7 @@
 ,
   { "name": "image", "latest_version": "4.9.2" }
 ,
-  { "name": "flutter_local_notifications", "latest_version": "22.3.0" }
+  { "name": "flutter_local_notifications", "latest_version": "22.3.1" }
 ,
   { "name": "screen_share_plugin", "latest_version": "0.0.2" }
 ]
