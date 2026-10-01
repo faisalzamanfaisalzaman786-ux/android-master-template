@@ -5,7 +5,7 @@
 ,
   { "name": "permission_handler", "latest_version": "13.0.2" }
 ,
-  { "name": "share_plus", "latest_version": "13.3.0" }
+  { "name": "share_plus", "latest_version": "13.3.1" }
 ,
   { "name": "path_provider", "latest_version": "2.1.6" }
 ,
